@@ -37,17 +37,21 @@ call_init_array:
         ret
 
 #else
-
-        movl $__init_array_start, %esi
-        movl $__init_array_end, %edi
+        /* FIX: save end pointer across calls — %esi/%edi are caller-saved
+           in cdecl, so called constructors may clobber them.  Use the
+           stack to preserve the end pointer around each indirect call. */
+        pushl   %ebx
+        movl    $__init_array_start, %ebx   /* cur  (callee-saved) */
+        movl    $__init_array_end,   %edx   /* end (kept in %edx across loop) */
 1:
-        cmpl %esi, %edi
-        je 2f
-        movl (%esi), %eax
-        addl $4, %esi
-        call *%eax
-        jmp 1b
+        cmpl    %ebx, %edx
+        je      2f
+        movl    (%ebx), %eax
+        addl    $4, %ebx
+        call    *%eax
+        jmp     1b
 2:
+        popl    %ebx
         ret
 
 #endif
@@ -67,7 +71,7 @@ _start:
 
         movq    %rdx, environ(%rip)
         andq    $-16, %rsp
-        subq $8, %rsp
+        subq    $8, %rsp
 
         call    call_init_array
         call    main
@@ -86,11 +90,15 @@ _start:
 
         movl    %edx, environ
 
-        pushl   %edx
-        pushl   %ecx
-        pushl   %eax
+        /* FIX: call_init_array takes no arguments — do NOT push argc/argv/envp
+           before it.  Push them only for main, after init_array completes. */
         call    call_init_array
+
+        pushl   %edx                    /* envp */
+        pushl   %ecx                    /* argv */
+        pushl   %eax                    /* argc */
         call    main
+        addl    $12, %esp
 
         movl    %eax, %ebx
         movl    $1, %eax                /* SYS_exit */
@@ -139,6 +147,10 @@ read:
         ret
 
 
+        /*
+         * println(const char *s)
+         *   Writes s followed by a newline to stdout.
+         */
         .global println
 println:
 #if defined(__x86_64__)
@@ -166,13 +178,16 @@ println:
         movq    $1, %rax
         syscall
         ret
-#else
-        /* i386 version */
 
+#else
+        /* FIX: the two register saves shift %esp by 8 bytes before the
+           return address, so the first argument is at 12(%esp), not 4(%esp).
+           Previous code used 4(%esp) which read the wrong stack slot. */
+        pushl   %ebx
         pushl   %esi
-        pushl   %edi
-        movl    4(%esp), %esi     /* s */
-        xor     %ecx, %ecx
+
+        movl    12(%esp), %esi    /* s  (was 4(%esp) — wrong after 2 pushes) */
+        xorl    %ecx, %ecx
 .Llen32:
         cmpb    $0, (%esi,%ecx)
         je      .Lwrite32
@@ -187,13 +202,13 @@ println:
         int     $0x80
 
         movl    $1, %ebx
-        lea     nl, %ecx
+        leal    nl, %ecx
         movl    $1, %edx
         movl    $4, %eax
         int     $0x80
 
-        popl    %edi
         popl    %esi
+        popl    %ebx
         ret
 #endif
 
@@ -209,6 +224,46 @@ _exit:
         movl    $1, %eax
         int     $0x80
 #endif
+
+
+/* ====================== import (open) ====================== */
+
+/*
+ * int import(const char *pathname, int flags, int mode)
+ *
+ *   Opens a file and returns a file descriptor, or a negative errno
+ *   on failure.  Mirrors the POSIX open(2) signature so existing call
+ *   sites need no changes if you rename it later.
+ *
+ *   Typical flags (from <fcntl.h> / asm/fcntl.h):
+ *     O_RDONLY = 0
+ *     O_WRONLY = 1
+ *     O_RDWR   = 2
+ *     O_CREAT  = 0x40  (64)
+ *     O_TRUNC  = 0x200 (512)
+ *
+ *   Example:
+ *     int fd = import("data.bin", 0, 0);   // open for reading
+ *     if (fd < 0) { /* handle error */ }
+ */
+        .global import
+import:
+#if defined(__x86_64__)
+        /* rdi = pathname, rsi = flags, rdx = mode */
+        movq    $2, %rax        /* SYS_open */
+        syscall
+        ret
+
+#else
+        /* 4(%esp) = pathname, 8(%esp) = flags, 12(%esp) = mode */
+        movl    4(%esp),  %ebx  /* pathname */
+        movl    8(%esp),  %ecx  /* flags    */
+        movl    12(%esp), %edx  /* mode     */
+        movl    $5, %eax        /* SYS_open */
+        int     $0x80
+        ret
+#endif
+
 
 /* ============ math ============== */
 
@@ -252,10 +307,10 @@ math_min:
     jle     1f              /* if a <= b, keep a */
     movl    %esi, %eax      /* else eax = b */
 1:
-    ret 
+    ret
 #else
     movl    4(%esp), %eax   /* eax = a */
-    cmpl    8(%esp), %eax  /* compare b with a */
+    cmpl    8(%esp), %eax   /* compare b with a */
     jle     1f
     movl    8(%esp), %eax
 1:
