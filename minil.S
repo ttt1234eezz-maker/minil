@@ -226,44 +226,6 @@ _exit:
 #endif
 
 
-/* ====================== import (open) ====================== */
-
-/*
- * int import(const char *pathname, int flags, int mode)
- *
- *   Opens a file and returns a file descriptor, or a negative errno
- *   on failure.  Mirrors the POSIX open(2) signature so existing call
- *   sites need no changes if you rename it later.
- *
- *   Typical flags (from <fcntl.h> / asm/fcntl.h):
- *     O_RDONLY = 0
- *     O_WRONLY = 1
- *     O_RDWR   = 2
- *     O_CREAT  = 0x40  (64)
- *     O_TRUNC  = 0x200 (512)
- *
- *   Example:
- *     int fd = import("data.bin", 0, 0);   // open for reading
- *     if (fd < 0) { /* handle error */ }
- */
-        .global import
-import:
-#if defined(__x86_64__)
-        /* rdi = pathname, rsi = flags, rdx = mode */
-        movq    $2, %rax        /* SYS_open */
-        syscall
-        ret
-
-#else
-        /* 4(%esp) = pathname, 8(%esp) = flags, 12(%esp) = mode */
-        movl    4(%esp),  %ebx  /* pathname */
-        movl    8(%esp),  %ecx  /* flags    */
-        movl    12(%esp), %edx  /* mode     */
-        movl    $5, %eax        /* SYS_open */
-        int     $0x80
-        ret
-#endif
-
 
 /* ============ math ============== */
 
