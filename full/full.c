@@ -1,3 +1,7 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 static uint8_t heap[1024 * 1024];
 static size_t heap_off = 0;
 
@@ -12,3 +16,7 @@ void* malloc(size_t n)
 }
 
 void free(void* p) { (void)p; }
+
+#ifdef __cplusplus
+}
+#endif
