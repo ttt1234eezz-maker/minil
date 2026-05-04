@@ -22,39 +22,45 @@ environ:
 .extern __init_array_start
 .extern __init_array_end
 
+
 call_init_array:
 #if defined(__x86_64__)
-        leaq __init_array_start(%rip), %rdi
-        leaq __init_array_end(%rip), %rsi
+        pushq   %r12
+        pushq   %r13
+
+        leaq    __init_array_start(%rip), %r12
+        leaq    __init_array_end(%rip),   %r13
 1:
-        cmp %rdi, %rsi
-        je 2f
-        movq (%rdi), %rax
-        addq $8, %rdi
-        call *%rax
-        jmp 1b
+        cmpq    %r13, %r12
+        je      2f
+        movq    (%r12), %rax
+        addq    $8, %r12
+        call    *%rax
+        jmp     1b
 2:
+        popq    %r13
+        popq    %r12
         ret
 
 #else
-        /* FIX: save end pointer across calls — %esi/%edi are caller-saved
-           in cdecl, so called constructors may clobber them.  Use the
-           stack to preserve the end pointer around each indirect call. */
         pushl   %ebx
-        movl    $__init_array_start, %ebx   /* cur  (callee-saved) */
-        movl    $__init_array_end,   %edx   /* end (kept in %edx across loop) */
+        pushl   %esi
+
+        movl    $__init_array_start, %ebx
+        movl    $__init_array_end,   %esi
 1:
-        cmpl    %ebx, %edx
+        cmpl    %esi, %ebx
         je      2f
         movl    (%ebx), %eax
         addl    $4, %ebx
         call    *%eax
         jmp     1b
 2:
+        popl    %esi
         popl    %ebx
         ret
-
 #endif
+
 
 _start:
 
@@ -62,25 +68,31 @@ _start:
 
 /* ---------- x86-64 ---------- */
 
+
         xorq    %rbp, %rbp
-        movq    %rsp, %r12
 
-        movq    (%r12), %rdi            /* argc */
-        leaq    8(%r12), %rsi           /* argv */
-        leaq    8(%rsi,%rdi,8), %rdx    /* envp */
+        movq    %rsp, %r12              /* original stack */
+        movq    (%r12), %r13            /* argc */
+        leaq    8(%r12), %r14           /* argv */
+        leaq    8(%r14,%r13,8), %r15    /* envp */
 
-        movq    %rdx, environ(%rip)
-        andq    $-16, %rsp
-        subq    $8, %rsp
+        movq    %r15, environ(%rip)
+
+        andq    $-16, %rsp              /* correct alignment before call */
 
         call    call_init_array
+
+        movq    %r13, %rdi              /* argc */
+        movq    %r14, %rsi              /* argv */
+        movq    %r15, %rdx              /* envp */
         call    main
 
         movq    %rax, %rdi
-        movq    $60, %rax               /* SYS_exit */
+        movq    $60, %rax
         syscall
 
 #else   /* ---------- i386 ---------- */
+
 
         xorl    %ebp, %ebp
 
@@ -90,18 +102,24 @@ _start:
 
         movl    %edx, environ
 
-        /* FIX: call_init_array takes no arguments — do NOT push argc/argv/envp
-           before it.  Push them only for main, after init_array completes. */
+        pushl   %eax                    /* save argc */
+        pushl   %ecx                    /* save argv */
+        pushl   %edx                    /* save envp */
+
         call    call_init_array
 
-        pushl   %edx                    /* envp */
-        pushl   %ecx                    /* argv */
-        pushl   %eax                    /* argc */
+        popl    %edx                    /* envp */
+        popl    %ecx                    /* argv */
+        popl    %eax                    /* argc */
+
+        pushl   %edx
+        pushl   %ecx
+        pushl   %eax
         call    main
         addl    $12, %esp
 
         movl    %eax, %ebx
-        movl    $1, %eax                /* SYS_exit */
+        movl    $1, %eax
         int     $0x80
 
 #endif
@@ -109,42 +127,45 @@ _start:
 
 /* ====================== syscalls ====================== */
 
-        .global write
+
+.global write
 write:
 #if defined(__x86_64__)
-
-        movq    $1, %rax                /* SYS_write */
+        movq    $1, %rax
         syscall
-
+        ret
 #else
+        pushl   %ebx
 
-        movl    4(%esp), %ebx           /* fd */
-        movl    8(%esp), %ecx           /* buf */
-        movl    12(%esp), %edx          /* len */
+        movl    8(%esp), %ebx           /* fd */
+        movl    12(%esp), %ecx          /* buf */
+        movl    16(%esp), %edx          /* len */
         movl    $4, %eax                /* SYS_write */
         int     $0x80
 
-#endif
+        popl    %ebx
         ret
+#endif
 
 
-        .global read
+.global read
 read:
 #if defined(__x86_64__)
-
-        movq    $0, %rax                /* SYS_read */
+        movq    $0, %rax
         syscall
-
+        ret
 #else
+        pushl   %ebx
 
-        movl    4(%esp), %ebx
-        movl    8(%esp), %ecx
-        movl    12(%esp), %edx
+        movl    8(%esp), %ebx
+        movl    12(%esp), %ecx
+        movl    16(%esp), %edx
         movl    $3, %eax
         int     $0x80
 
-#endif
+        popl    %ebx
         ret
+#endif
 
 
         /*
