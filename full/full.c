@@ -716,29 +716,6 @@ int strncmp(const char* a, const char* b, size_t n)
 }
 
 /* --------------------------------------------------
- * memmove
- * Safe for overlapping memory regions.
- * -------------------------------------------------- */
-void* memmove(void* dst, const void* src, size_t n)
-{
-    u8* d = (u8*)dst;
-    const u8* s = (const u8*)src;
-
-    if (d == s || n == 0)
-        return dst;
-
-    if (d < s) {
-        for (size_t i = 0; i < n; ++i)
-            d[i] = s[i];
-    } else {
-        while (n--)
-            d[n] = s[n];
-    }
-
-    return dst;
-}
-
-/* --------------------------------------------------
  * memcmp
  * -------------------------------------------------- */
 int memcmp(const void* a, const void* b, size_t n)
