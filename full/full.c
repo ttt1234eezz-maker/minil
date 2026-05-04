@@ -8,7 +8,27 @@ extern "C" {
 typedef unsigned long size_t;
 typedef unsigned char u8;
 
+typedef unsigned short sa_family_t;
+typedef unsigned int   socklen_t;
+
+struct sockaddr {
+    sa_family_t sa_family;
+    char sa_data[14];
+};
+
+struct sockaddr_un {
+    sa_family_t sun_family;
+    char sun_path[108];
+};
+
+#define AF_UNIX      1
+#define AF_INET      2
+
+#define SOCK_STREAM  1
+#define SOCK_DGRAM   2
+
 extern void _exit(int);
+extern char** environ;
 
 /* --------------------------------------------------
  * abort()
@@ -27,6 +47,178 @@ void __cxa_pure_virtual(void)
 {
     abort();
 }
+
+/* --------------------------------------------------
+ * Raw Linux syscall helpers
+ * -------------------------------------------------- */
+
+#if defined(__x86_64__)
+
+static long sys_call1(long n, long a)
+{
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(n), "D"(a)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+static long sys_call2(long n, long a, long b)
+{
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(n), "D"(a), "S"(b)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+static long sys_call3(long n, long a, long b, long c)
+{
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(n), "D"(a), "S"(b), "d"(c)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+#else
+
+static long sys_call1(long n, long a)
+{
+    long ret;
+
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(n), "b"(a)
+        : "memory"
+    );
+
+    return ret;
+}
+
+static long sys_call2(long n, long a, long b)
+{
+    long ret;
+
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(n), "b"(a), "c"(b)
+        : "memory"
+    );
+
+    return ret;
+}
+
+static long sys_call3(long n, long a, long b, long c)
+{
+    long ret;
+
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(n), "b"(a), "c"(b), "d"(c)
+        : "memory"
+    );
+
+    return ret;
+}
+
+#endif
+
+
+/* --------------------------------------------------
+ * close()
+ * -------------------------------------------------- */
+
+int close(int fd)
+{
+#if defined(__x86_64__)
+    return (int)sys_call1(3, fd);       /* SYS_close = 3 */
+#else
+    return (int)sys_call1(6, fd);       /* SYS_close = 6 */
+#endif
+
+/* --------------------------------------------------
+ * socket()
+ * -------------------------------------------------- */
+
+int socket(int domain, int type, int protocol)
+{
+#if defined(__x86_64__)
+    return (int)sys_call3(41, domain, type, protocol);   /* SYS_socket */
+#else
+    unsigned long args[3];
+
+    args[0] = (unsigned long)domain;
+    args[1] = (unsigned long)type;
+    args[2] = (unsigned long)protocol;
+
+    return (int)sys_call2(102, 1, (long)args);           /* socketcall(SYS_SOCKET) */
+#endif
+}
+
+/* --------------------------------------------------
+ * connect()
+ * -------------------------------------------------- */
+
+int connect(int fd, const struct sockaddr* addr, socklen_t len)
+{
+#if defined(__x86_64__)
+    return (int)sys_call3(42, fd, (long)addr, len);      /* SYS_connect */
+#else
+    unsigned long args[3];
+
+    args[0] = (unsigned long)fd;
+    args[1] = (unsigned long)addr;
+    args[2] = (unsigned long)len;
+
+    return (int)sys_call2(102, 3, (long)args);           /* socketcall(SYS_CONNECT) */
+#endif
+}
+
+/* --------------------------------------------------
+ * getenv()
+ * -------------------------------------------------- */
+
+char* getenv(const char* name)
+{
+    size_t name_len;
+
+    if (!name || !*name)
+        return 0;
+
+    name_len = strlen(name);
+
+    if (!environ)
+        return 0;
+
+    for (char** e = environ; *e; ++e) {
+        if (strncmp(*e, name, name_len) == 0 &&
+            (*e)[name_len] == '=') {
+            return *e + name_len + 1;
+        }
+    }
+
+    return 0;
+}
+
 
 /* --------------------------------------------------
  * Memory helpers
