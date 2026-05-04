@@ -1,21 +1,26 @@
 /* This software is dedicated to the public domain under CC0 1.0 Universal. */
 /* See LICENCE.md for full legal text. */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-extern void _exit(int);
+typedef unsigned long size_t;
+typedef unsigned char u8;
 
-typedef unsigned long  size_t;
-typedef unsigned char  u8;
+extern void _exit(int);
 
 /* --------------------------------------------------
  * abort()
- * Required by C and C++
  * -------------------------------------------------- */
+__attribute__((noreturn))
 void abort(void)
 {
     _exit(127);
+
+    for (;;) {
+        /* unreachable */
+    }
 }
 
 void __cxa_pure_virtual(void)
@@ -23,29 +28,14 @@ void __cxa_pure_virtual(void)
     abort();
 }
 
-static u8     heap[1024 * 1024];
-static size_t heap_off = 0;
-
-void* malloc(size_t n)
-{
-    if (heap_off + n > sizeof(heap))
-        abort();
-
-    void* p = &heap[heap_off];
-    heap_off += (n + 7) & ~7; // align
-    return p;
-}
-
-void free(void* p) { (void)p; }
-
-
 /* --------------------------------------------------
- * memset (minimal, required)
+ * Memory helpers
  * -------------------------------------------------- */
+
 void* memset(void* dst, int val, size_t n)
 {
     u8* p = (u8*)dst;
-    u8  v = (u8)val;
+    u8 v = (u8)val;
 
     while (n--)
         *p++ = v;
@@ -53,44 +43,345 @@ void* memset(void* dst, int val, size_t n)
     return dst;
 }
 
-
-void* calloc(size_t n, size_t s)
-{
-    size_t total = n * s;
-    void* p = malloc(total);
-    if (!p)
-        abort();
-
-    memset(p, 0, total);
-    return p;
-}
-
 void* memcpy(void* dst, const void* src, size_t n)
 {
-    uint8_t* d = dst;
-    const uint8_t* s = src;
+    u8* d = (u8*)dst;
+    const u8* s = (const u8*)src;
+
     for (size_t i = 0; i < n; ++i)
         d[i] = s[i];
+
     return dst;
 }
 
+void* memmove(void* dst, const void* src, size_t n)
+{
+    u8* d = (u8*)dst;
+    const u8* s = (const u8*)src;
+
+    if (d == s || n == 0)
+        return dst;
+
+    if (d < s) {
+        for (size_t i = 0; i < n; ++i)
+            d[i] = s[i];
+    } else {
+        while (n--)
+            d[n] = s[n];
+    }
+
+    return dst;
+}
+
+/* --------------------------------------------------
+ * Mini heap allocator
+ * -------------------------------------------------- */
+
+#define HEAP_SIZE   (1024UL * 1024UL)
+#define ALIGNMENT   16UL
+#define MAGIC_USED  ((size_t)0xC0FFEEUL)
+
+#define ALIGN_UP(x) (((x) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
+
+typedef struct HeapBlock {
+    size_t size;
+    int free;
+    size_t magic;
+    struct HeapBlock* next;
+} HeapBlock;
+
+#define HEADER_SIZE ALIGN_UP(sizeof(HeapBlock))
+
+static u8 heap[HEAP_SIZE] __attribute__((aligned(16)));
+static size_t heap_off = 0;
+static HeapBlock* heap_head = 0;
+
+static size_t heap_align_size(size_t n)
+{
+    size_t aligned;
+
+    if (n == 0)
+        n = 1;
+
+    if (n > ((size_t)-1) - (ALIGNMENT - 1))
+        abort();
+
+    aligned = ALIGN_UP(n);
+
+    return aligned;
+}
+
+static void heap_split_block(HeapBlock* block, size_t wanted)
+{
+    size_t remaining;
+    HeapBlock* next;
+
+    if (!block)
+        return;
+
+    if (block->size <= wanted)
+        return;
+
+    remaining = block->size - wanted;
+
+    if (remaining < HEADER_SIZE + ALIGNMENT)
+        return;
+
+    next = (HeapBlock*)((u8*)block + HEADER_SIZE + wanted);
+
+    next->size = remaining - HEADER_SIZE;
+    next->free = 1;
+    next->magic = MAGIC_USED;
+    next->next = block->next;
+
+    block->size = wanted;
+    block->next = next;
+}
+
+static void heap_coalesce(void)
+{
+    HeapBlock* cur = heap_head;
+
+    while (cur && cur->next) {
+        u8* cur_end = (u8*)cur + HEADER_SIZE + cur->size;
+
+        if (cur->free &&
+            cur->next->free &&
+            cur_end == (u8*)cur->next) {
+
+            cur->size += HEADER_SIZE + cur->next->size;
+            cur->next = cur->next->next;
+            continue;
+        }
+
+        cur = cur->next;
+    }
+}
+
+static HeapBlock* heap_find_free(size_t n)
+{
+    HeapBlock* cur = heap_head;
+
+    while (cur) {
+        if (cur->free && cur->size >= n)
+            return cur;
+
+        cur = cur->next;
+    }
+
+    return 0;
+}
+
+static HeapBlock* heap_new_block(size_t n)
+{
+    HeapBlock* block;
+    size_t need;
+
+    if (n > ((size_t)-1) - HEADER_SIZE)
+        abort();
+
+    need = HEADER_SIZE + n;
+
+    if (need > HEAP_SIZE - heap_off)
+        abort();
+
+    block = (HeapBlock*)&heap[heap_off];
+
+    block->size = n;
+    block->free = 0;
+    block->magic = MAGIC_USED;
+    block->next = 0;
+
+    if (!heap_head) {
+        heap_head = block;
+    } else {
+        HeapBlock* cur = heap_head;
+
+        while (cur->next)
+            cur = cur->next;
+
+        cur->next = block;
+    }
+
+    heap_off += need;
+
+    return block;
+}
+
+static HeapBlock* heap_block_from_ptr(void* p)
+{
+    HeapBlock* block;
+
+    if (!p)
+        return 0;
+
+    block = (HeapBlock*)((u8*)p - HEADER_SIZE);
+
+    if (block->magic != MAGIC_USED)
+        abort();
+
+    return block;
+}
+
+/* --------------------------------------------------
+ * malloc()
+ * -------------------------------------------------- */
+
+void* malloc(size_t n)
+{
+    HeapBlock* block;
+    size_t wanted;
+
+    wanted = heap_align_size(n);
+
+    block = heap_find_free(wanted);
+
+    if (block) {
+        block->free = 0;
+        heap_split_block(block, wanted);
+        return (u8*)block + HEADER_SIZE;
+    }
+
+    block = heap_new_block(wanted);
+
+    return (u8*)block + HEADER_SIZE;
+}
+
+/* --------------------------------------------------
+ * free()
+ * -------------------------------------------------- */
+
+void free(void* p)
+{
+    HeapBlock* block;
+
+    if (!p)
+        return;
+
+    block = heap_block_from_ptr(p);
+
+    if (block->free)
+        abort();
+
+    block->free = 1;
+
+    heap_coalesce();
+}
+
+/* --------------------------------------------------
+ * calloc()
+ * -------------------------------------------------- */
+
 void* calloc(size_t n, size_t s)
 {
-    size_t total = n * s;
-    void* p = malloc(total);
+    size_t total;
+    void* p;
+
+    if (n != 0 && s > ((size_t)-1) / n)
+        abort();
+
+    total = n * s;
+
+    p = malloc(total);
     memset(p, 0, total);
+
     return p;
 }
 
+/* --------------------------------------------------
+ * realloc()
+ * -------------------------------------------------- */
+
+void* realloc(void* p, size_t n)
+{
+    HeapBlock* block;
+    size_t wanted;
+    void* new_ptr;
+    size_t copy_size;
+
+    if (!p)
+        return malloc(n);
+
+    if (n == 0) {
+        free(p);
+        return 0;
+    }
+
+    block = heap_block_from_ptr(p);
+    wanted = heap_align_size(n);
+
+    if (block->size >= wanted) {
+        heap_split_block(block, wanted);
+        return p;
+    }
+
+    if (block->next && block->next->free) {
+        u8* block_end = (u8*)block + HEADER_SIZE + block->size;
+
+        if (block_end == (u8*)block->next) {
+            size_t combined = block->size + HEADER_SIZE + block->next->size;
+
+            if (combined >= wanted) {
+                block->size = combined;
+                block->next = block->next->next;
+                heap_split_block(block, wanted);
+                return p;
+            }
+        }
+    }
+
+    new_ptr = malloc(n);
+
+    copy_size = block->size;
+    if (copy_size > n)
+        copy_size = n;
+
+    memcpy(new_ptr, p, copy_size);
+    free(p);
+
+    return new_ptr;
+}
 
 #ifdef __cplusplus
 }
 #endif
 
+/* --------------------------------------------------
+ * C++ new/delete
+ * -------------------------------------------------- */
 
 #ifdef __cplusplus
-void* operator new(size_t n)            { return malloc(n); }
-void* operator new[](size_t n)           { return malloc(n); }
-void  operator delete(void* p) noexcept  { free(p); }
-void  operator delete[](void* p) noexcept{ free(p); }
+
+void* operator new(size_t n)
+{
+    return malloc(n);
+}
+
+void* operator new[](size_t n)
+{
+    return malloc(n);
+}
+
+void operator delete(void* p) noexcept
+{
+    free(p);
+}
+
+void operator delete[](void* p) noexcept
+{
+    free(p);
+}
+
+/* C++14+ sized delete */
+
+void operator delete(void* p, size_t) noexcept
+{
+    free(p);
+}
+
+void operator delete[](void* p, size_t) noexcept
+{
+    free(p);
+}
+
 #endif
