@@ -27,6 +27,7 @@ call_init_array:
 #if defined(__x86_64__)
         pushq   %r12
         pushq   %r13
+        subq    $8, %rsp
 
         leaq    __init_array_start(%rip), %r12
         leaq    __init_array_end(%rip),   %r13
@@ -38,6 +39,7 @@ call_init_array:
         call    *%rax
         jmp     1b
 2:
+        addq    $8, %rsp
         popq    %r13
         popq    %r12
         ret
@@ -63,7 +65,7 @@ call_init_array:
 
 
 _start:
-
+        cld
 #if defined(__x86_64__)
 
 /* ---------- x86-64 ---------- */
