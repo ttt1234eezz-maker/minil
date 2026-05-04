@@ -342,6 +342,132 @@ void* realloc(void* p, size_t n)
     return new_ptr;
 }
 
+/* --------------------------------------------------
+ * strlen
+ * -------------------------------------------------- */
+size_t strlen(const char* s)
+{
+    const char* p = s;
+
+    while (*p)
+        ++p;
+
+    return (size_t)(p - s);
+}
+
+/* --------------------------------------------------
+ * strcmp
+ * -------------------------------------------------- */
+int strcmp(const char* a, const char* b)
+{
+    while (*a && (*a == *b)) {
+        ++a;
+        ++b;
+    }
+
+    return (int)((unsigned char)*a - (unsigned char)*b);
+}
+
+/* --------------------------------------------------
+ * strncmp
+ * -------------------------------------------------- */
+int strncmp(const char* a, const char* b, size_t n)
+{
+    while (n && *a && (*a == *b)) {
+        ++a;
+        ++b;
+        --n;
+    }
+
+    if (n == 0)
+        return 0;
+
+    return (int)((unsigned char)*a - (unsigned char)*b);
+}
+
+/* --------------------------------------------------
+ * memmove
+ * Safe for overlapping memory regions.
+ * -------------------------------------------------- */
+void* memmove(void* dst, const void* src, size_t n)
+{
+    u8* d = (u8*)dst;
+    const u8* s = (const u8*)src;
+
+    if (d == s || n == 0)
+        return dst;
+
+    if (d < s) {
+        for (size_t i = 0; i < n; ++i)
+            d[i] = s[i];
+    } else {
+        while (n--)
+            d[n] = s[n];
+    }
+
+    return dst;
+}
+
+/* --------------------------------------------------
+ * memcmp
+ * -------------------------------------------------- */
+int memcmp(const void* a, const void* b, size_t n)
+{
+    const u8* x = (const u8*)a;
+    const u8* y = (const u8*)b;
+
+    for (size_t i = 0; i < n; ++i) {
+        if (x[i] != y[i])
+            return (int)x[i] - (int)y[i];
+    }
+
+    return 0;
+}
+
+/* --------------------------------------------------
+ * puts
+ * Writes string + '\n' to stdout.
+ * Requires write(int fd, const void* buf, size_t len).
+ * -------------------------------------------------- */
+extern long write(int fd, const void* buf, size_t len);
+
+int puts(const char* s)
+{
+    size_t n = strlen(s);
+
+    write(1, s, n);
+    write(1, "\n", 1);
+
+    return 0;
+}
+
+/* --------------------------------------------------
+ * strdup
+ * Allocates and duplicates a C string.
+ * Requires malloc() and memcpy().
+ * -------------------------------------------------- */
+char* strdup(const char* s)
+{
+    size_t n;
+    char* out;
+
+    n = strlen(s);
+
+    if (n == (size_t)-1)
+        abort();
+
+    n = n + 1;
+
+    out = (char*)malloc(n);
+
+    if (!out)
+        abort();
+
+    memcpy(out, s, n);
+
+    return out;
+}
+
 #ifdef __cplusplus
 }
 #endif
