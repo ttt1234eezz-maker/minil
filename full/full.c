@@ -426,18 +426,18 @@ int memcmp(const void* a, const void* b, size_t n)
 
 /* --------------------------------------------------
  * puts
- * Writes string + '\n' to stdout.
+ * Puts text to println 
  * Requires write(int fd, const void* buf, size_t len).
  * -------------------------------------------------- */
-extern long write(int fd, const void* buf, size_t len);
+
+extern void println(const char* s);
 
 int puts(const char* s)
 {
-    size_t n = strlen(s);
+    if (!s)
+        s = "(null)";
 
-    write(1, s, n);
-    write(1, "\n", 1);
-
+    println(s);
     return 0;
 }
 
