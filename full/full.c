@@ -154,6 +154,7 @@ int close(int fd)
 #else
     return (int)sys_call1(6, fd);       /* SYS_close = 6 */
 #endif
+}
 
 /* --------------------------------------------------
  * socket()
@@ -191,32 +192,6 @@ int connect(int fd, const struct sockaddr* addr, socklen_t len)
 
     return (int)sys_call2(102, 3, (long)args);           /* socketcall(SYS_CONNECT) */
 #endif
-}
-
-/* --------------------------------------------------
- * getenv()
- * -------------------------------------------------- */
-
-char* getenv(const char* name)
-{
-    size_t name_len;
-
-    if (!name || !*name)
-        return 0;
-
-    name_len = strlen(name);
-
-    if (!environ)
-        return 0;
-
-    for (char** e = environ; *e; ++e) {
-        if (strncmp(*e, name, name_len) == 0 &&
-            (*e)[name_len] == '=') {
-            return *e + name_len + 1;
-        }
-    }
-
-    return 0;
 }
 
 
