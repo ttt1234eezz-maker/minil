@@ -96,8 +96,6 @@ static long sys_call3(long n, long a, long b, long c)
     return ret;
 }
 
-#if defined(__x86_64__)
-
 static long sys_call6(long n,
                       long a,
                       long b,
@@ -127,8 +125,6 @@ static long sys_call6(long n,
 
     return ret;
 }
-
-#endif
 
 #else
 
