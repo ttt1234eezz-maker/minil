@@ -96,6 +96,40 @@ static long sys_call3(long n, long a, long b, long c)
     return ret;
 }
 
+#if defined(__x86_64__)
+
+static long sys_call6(long n,
+                      long a,
+                      long b,
+                      long c,
+                      long d,
+                      long e,
+                      long f)
+{
+    long ret;
+
+    register long r10 __asm__("r10") = d;
+    register long r8  __asm__("r8")  = e;
+    register long r9  __asm__("r9")  = f;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(n),
+          "D"(a),
+          "S"(b),
+          "d"(c),
+          "r"(r10),
+          "r"(r8),
+          "r"(r9)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+#endif
+
 #else
 
 static long sys_call1(long n, long a)
@@ -134,6 +168,35 @@ static long sys_call3(long n, long a, long b, long c)
         "int $0x80"
         : "=a"(ret)
         : "a"(n), "b"(a), "c"(b), "d"(c)
+        : "memory"
+    );
+
+    return ret;
+}
+
+static long sys_call6(long n,
+                      long a,
+                      long b,
+                      long c,
+                      long d,
+                      long e,
+                      long f)
+{
+    long ret;
+
+    __asm__ volatile (
+        "pushl %%ebp\n\t"
+        "movl %[arg6], %%ebp\n\t"
+        "int $0x80\n\t"
+        "popl %%ebp\n\t"
+        : "=a"(ret)
+        : "0"(n),
+          "b"(a),
+          "c"(b),
+          "d"(c),
+          "S"(d),
+          "D"(e),
+          [arg6] "r"(f)
         : "memory"
     );
 
@@ -194,6 +257,80 @@ int connect(int fd, const struct sockaddr* addr, socklen_t len)
 #endif
 }
 
+/* --------------------------------------------------
+ * mmap()
+ * Raw Linux syscall.
+ *
+ * Returns:
+ *   success: mapped address
+ *   failure: negative errno casted to void*
+ *
+ * If you want libc-like behavior, wrap negative values
+ * into MAP_FAILED later.
+ * -------------------------------------------------- */
+
+void* mmap(void* addr,
+           size_t len,
+           int prot,
+           int flags,
+           int fd,
+           long off)
+{
+#if defined(__x86_64__)
+
+    long ret;
+
+    ret = sys_call6(
+        9,              /* SYS_mmap */
+        (long)addr,
+        (long)len,
+        (long)prot,
+        (long)flags,
+        (long)fd,
+        (long)off
+    );
+
+    return (void*)ret;
+
+#else
+
+    struct mmap_args {
+        unsigned long addr;
+        unsigned long len;
+        unsigned long prot;
+        unsigned long flags;
+        unsigned long fd;
+        unsigned long offset;
+    } args;
+
+    long ret;
+
+    args.addr   = (unsigned long)addr;
+    args.len    = (unsigned long)len;
+    args.prot   = (unsigned long)prot;
+    args.flags  = (unsigned long)flags;
+    args.fd     = (unsigned long)fd;
+    args.offset = (unsigned long)off;
+
+    ret = sys_call1(90, (long)&args);   /* SYS_mmap = 90 */
+
+    return (void*)ret;
+
+#endif
+}
+
+/* --------------------------------------------------
+ * munmap()
+ * -------------------------------------------------- */
+
+int munmap(void* addr, size_t len)
+{
+#if defined(__x86_64__)
+    return (int)sys_call2(11, (long)addr, (long)len);  /* SYS_munmap = 11 */
+#else
+    return (int)sys_call2(91, (long)addr, (long)len);  /* SYS_munmap = 91 */
+#endif
+}
 
 /* --------------------------------------------------
  * Memory helpers
