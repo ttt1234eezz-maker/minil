@@ -8,9 +8,11 @@
 /* ====================== bss ====================== */
         .section .bss
 #if defined(__x86_64__)
+        .balign 8
 environ:
         .quad 0
 #else
+        .balign 4
 environ:
         .long 0
 #endif
