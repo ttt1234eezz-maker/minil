@@ -241,6 +241,32 @@ void* memmove(void* dst, const void* src, size_t n)
 }
 
 /* --------------------------------------------------
+ * getenv()
+ * -------------------------------------------------- */
+
+char* getenv(const char* name)
+{
+    size_t name_len;
+
+    if (!name || !*name)
+        return 0;
+
+    name_len = strlen(name);
+
+    if (!environ)
+        return 0;
+
+    for (char** e = environ; *e; ++e) {
+        if (strncmp(*e, name, name_len) == 0 &&
+            (*e)[name_len] == '=') {
+            return *e + name_len + 1;
+        }
+    }
+
+    return 0;
+}
+
+/* --------------------------------------------------
  * Mini heap allocator
  * -------------------------------------------------- */
 
