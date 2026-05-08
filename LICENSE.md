@@ -91,4 +91,3 @@ persons.
 ### d.  
 Creative Commons is not a party to this document and has no obligation
 with respect to its use.
-``
