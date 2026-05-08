@@ -29,10 +29,6 @@ ABI, and system calls.
 
 ---
 
-## File Layout
-
----
-
 ## How It Works
 
 1. Linux kernel jumps to `_start`
