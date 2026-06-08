@@ -807,4 +807,19 @@ void operator delete[](void* p, size_t) noexcept
 
 #ifdef __cplusplus
 extern "C" void __gxx_personality_v0(void) {}
+extern "C" int __cxa_atexit(void (*f)(void*), void* p, void* d) {
+    return 0; 
+}
+extern "C" int __cxa_guard_acquire(long* guard) {
+    if (*guard) return 0; // Вже ініціалізовано
+    return 1;             // Ініціалізуємо зараз
+}
+
+extern "C" void __cxa_guard_release(long* guard) {
+    *guard = 1;           // Позначаємо як ініціалізовано
+}
+
+extern "C" void __cxa_guard_abort(long* guard) {
+    abort();
+}
 #endif
