@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+#include <stdarg.h>
+
 typedef unsigned long size_t;
 typedef unsigned char u8;
 
@@ -29,6 +31,61 @@ struct sockaddr_un {
 
 extern void _exit(int);
 extern char** environ;
+
+static void buf_putc(char** buf, size_t* remain, char c) {
+    if (*remain > 1) {
+        **buf = c;
+        (*buf)++;
+        (*remain)--;
+    }
+}
+
+/* Оптимізована функція для чисел (використовує стек) */
+static void buf_putnum(char** buf, size_t* remain, unsigned long n, int base) {
+    static const char digits[] = "0123456789abcdef";
+    char tmp[32];
+    int i = 0;
+    if (n == 0) { buf_putc(buf, remain, '0'); return; }
+    while (n > 0) {
+        tmp[i++] = digits[n % base];
+        n /= base;
+    }
+    while (i > 0) buf_putc(buf, remain, tmp[--i]);
+}
+
+int snprintf(char* str, size_t size, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    
+    char* p = str;
+    size_t remain = size;
+
+    for (const char* f = format; *f; f++) {
+        if (*f != '%' || !*(f + 1)) {
+            buf_putc(&p, &remain, *f);
+            continue;
+        }
+        
+        switch (*++f) {
+            case 's': {
+                const char* s = va_arg(args, const char*);
+                while (*s && remain > 1) { *p++ = *s++; remain--; }
+                break;
+            }
+            case 'd': buf_putnum(&p, &remain, (unsigned long)va_arg(args, int), 10); break;
+            case 'x': buf_putnum(&p, &remain, va_arg(args, unsigned int), 16); break;
+            case 'p': 
+                buf_puts(&p, &remain, "0x"); 
+                buf_putnum(&p, &remain, (unsigned long)va_arg(args, void*), 16); 
+                break;
+            default: buf_putc(&p, &remain, *f); break;
+        }
+    }
+    
+    if (remain > 0) *p = '\0';
+    va_end(args);
+    return (int)(p - str);
+}
 
 /* --------------------------------------------------
  * abort()
