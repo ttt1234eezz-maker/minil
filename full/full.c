@@ -39,8 +39,6 @@ static void buf_putc(char** buf, size_t* remain, char c) {
         (*remain)--;
     }
 }
-
-/* Оптимізована функція для чисел (використовує стек) */
 static void buf_putnum(char** buf, size_t* remain, unsigned long n, int base) {
     static const char digits[] = "0123456789abcdef";
     char tmp[32];
