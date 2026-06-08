@@ -833,3 +833,18 @@ extern "C" void __cxa_guard_abort(long* guard) {
     abort();
 }
 #endif
+
+#ifdef __cplusplus
+namespace std {
+    template<typename InputIt, typename T>
+    auto count(InputIt first, InputIt last, const T& value) {
+        auto n = 0;
+        for (; first != last; ++first) {
+            if (*first == value) {
+                n++;
+            }
+        }
+        return n;
+    }
+}
+#endif
