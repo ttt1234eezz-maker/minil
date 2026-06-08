@@ -804,3 +804,7 @@ void operator delete[](void* p, size_t) noexcept
 #endif // __cplusplus >= 201402L
 
 #endif // __cplusplus
+
+#ifdef __cplusplus
+extern "C" void __gxx_personality_v0(void) {}
+#endif
