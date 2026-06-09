@@ -32,6 +32,13 @@ struct sockaddr_un {
 extern void _exit(int);
 extern char** environ;
 
+/* Попередні оголошення (Forward Declarations) для уникнення помилок компіляції */
+size_t strlen(const char* s);
+int strncmp(const char* a, const char* b, size_t n);
+
+/* --------------------------------------------------
+ * Буферні помічники для snprintf
+ * -------------------------------------------------- */
 static void buf_putc(char** buf, size_t* remain, char c) {
     if (*remain > 1) {
         **buf = c;
@@ -39,6 +46,14 @@ static void buf_putc(char** buf, size_t* remain, char c) {
         (*remain)--;
     }
 }
+
+/* ВИПРАВЛЕНО: Додано відсутню функцію buf_puts */
+static void buf_puts(char** buf, size_t* remain, const char* s) {
+    while (*s) {
+        buf_putc(buf, remain, *s++);
+    }
+}
+
 static void buf_putnum(char** buf, size_t* remain, unsigned long n, int base) {
     static const char digits[] = "0123456789abcdef";
     char tmp[32];
@@ -51,6 +66,9 @@ static void buf_putnum(char** buf, size_t* remain, unsigned long n, int base) {
     while (i > 0) buf_putc(buf, remain, tmp[--i]);
 }
 
+/* --------------------------------------------------
+ * snprintf()
+ * -------------------------------------------------- */
 int snprintf(char* str, size_t size, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -67,16 +85,35 @@ int snprintf(char* str, size_t size, const char* format, ...) {
         switch (*++f) {
             case 's': {
                 const char* s = va_arg(args, const char*);
-                while (*s && remain > 1) { *p++ = *s++; remain--; }
+                if (!s) s = "(null)";
+                /* Оптимізовано: використання спільного buf_puts */
+                buf_puts(&p, &remain, s);
                 break;
             }
-            case 'd': buf_putnum(&p, &remain, (unsigned long)va_arg(args, int), 10); break;
-            case 'x': buf_putnum(&p, &remain, va_arg(args, unsigned int), 16); break;
-            case 'p': 
+            case 'd': {
+                /* ВИПРАВЛЕНО: Коректна обробка від'ємних чисел */
+                int val = va_arg(args, int);
+                if (val < 0) {
+                    buf_putc(&p, &remain, '-');
+                    buf_putnum(&p, &remain, (unsigned long)(-val), 10);
+                } else {
+                    buf_putnum(&p, &remain, (unsigned long)val, 10);
+                }
+                break;
+            }
+            case 'x': {
+                buf_putnum(&p, &remain, va_arg(args, unsigned int), 16); 
+                break;
+            }
+            case 'p': {
                 buf_puts(&p, &remain, "0x"); 
                 buf_putnum(&p, &remain, (unsigned long)va_arg(args, void*), 16); 
                 break;
-            default: buf_putc(&p, &remain, *f); break;
+            }
+            default: {
+                buf_putc(&p, &remain, *f); 
+                break;
+            }
         }
     }
     
@@ -92,10 +129,7 @@ __attribute__((noreturn))
 void abort(void)
 {
     _exit(127);
-
-    for (;;) {
-        /* unreachable */
-    }
+    for (;;) { /* unreachable */ }
 }
 
 void __cxa_pure_virtual(void)
@@ -104,73 +138,40 @@ void __cxa_pure_virtual(void)
 }
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311
-#define ckd_add(result, a, b) \
-    __builtin_add_overflow((a), (b), (result))
-
-#define ckd_sub(result, a, b) \
-    __builtin_sub_overflow((a), (b), (result))
-
-#define ckd_mul(result, a, b) \
-    __builtin_mul_overflow((a), (b), (result))
+#define ckd_add(result, a, b) __builtin_add_overflow((a), (b), (result))
+#define ckd_sub(result, a, b) __builtin_sub_overflow((a), (b), (result))
+#define ckd_mul(result, a, b) __builtin_mul_overflow((a), (b), (result))
 #endif 
+
 /* --------------------------------------------------
  * Raw Linux syscall helpers
  * -------------------------------------------------- */
-
 #if defined(__x86_64__)
 
 static long sys_call1(long n, long a)
 {
     long ret;
-
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(n), "D"(a)
-        : "rcx", "r11", "memory"
-    );
-
+    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a) : "rcx", "r11", "memory");
     return ret;
 }
 
 static long sys_call2(long n, long a, long b)
 {
     long ret;
-
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(n), "D"(a), "S"(b)
-        : "rcx", "r11", "memory"
-    );
-
+    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b) : "rcx", "r11", "memory");
     return ret;
 }
 
 static long sys_call3(long n, long a, long b, long c)
 {
     long ret;
-
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(n), "D"(a), "S"(b), "d"(c)
-        : "rcx", "r11", "memory"
-    );
-
+    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory");
     return ret;
 }
 
-static long sys_call6(long n,
-                      long a,
-                      long b,
-                      long c,
-                      long d,
-                      long e,
-                      long f)
+static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
 {
     long ret;
-
     register long r10 __asm__("r10") = d;
     register long r8  __asm__("r8")  = e;
     register long r9  __asm__("r9")  = f;
@@ -178,99 +179,55 @@ static long sys_call6(long n,
     __asm__ volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(n),
-          "D"(a),
-          "S"(b),
-          "d"(c),
-          "r"(r10),
-          "r"(r8),
-          "r"(r9)
+        : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
         : "rcx", "r11", "memory"
     );
-
     return ret;
 }
 
-#else
+#else /* i386 */
 
 static long sys_call1(long n, long a)
 {
     long ret;
-
-    __asm__ volatile (
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(n), "b"(a)
-        : "memory"
-    );
-
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(n), "b"(a) : "memory");
     return ret;
 }
 
 static long sys_call2(long n, long a, long b)
 {
     long ret;
-
-    __asm__ volatile (
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(n), "b"(a), "c"(b)
-        : "memory"
-    );
-
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(n), "b"(a), "c"(b) : "memory");
     return ret;
 }
 
 static long sys_call3(long n, long a, long b, long c)
 {
     long ret;
-
-    __asm__ volatile (
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(n), "b"(a), "c"(b), "d"(c)
-        : "memory"
-    );
-
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(n), "b"(a), "c"(b), "d"(c) : "memory");
     return ret;
 }
 
-static long sys_call6(long n,
-                      long a,
-                      long b,
-                      long c,
-                      long d,
-                      long e,
-                      long f)
+static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
 {
     long ret;
-
     __asm__ volatile (
         "pushl %%ebp\n\t"
         "movl %[arg6], %%ebp\n\t"
         "int $0x80\n\t"
         "popl %%ebp\n\t"
         : "=a"(ret)
-        : "0"(n),
-          "b"(a),
-          "c"(b),
-          "d"(c),
-          "S"(d),
-          "D"(e),
-          [arg6] "r"(f)
+        : "0"(n), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e), [arg6] "r"(f)
         : "memory"
     );
-
     return ret;
 }
 
 #endif
 
-
 /* --------------------------------------------------
- * close()
+ * Системні виклики
  * -------------------------------------------------- */
-
 int close(int fd)
 {
 #if defined(__x86_64__)
@@ -280,28 +237,18 @@ int close(int fd)
 #endif
 }
 
-/* --------------------------------------------------
- * socket()
- * -------------------------------------------------- */
-
 int socket(int domain, int type, int protocol)
 {
 #if defined(__x86_64__)
     return (int)sys_call3(41, domain, type, protocol);   /* SYS_socket */
 #else
     unsigned long args[3];
-
     args[0] = (unsigned long)domain;
     args[1] = (unsigned long)type;
     args[2] = (unsigned long)protocol;
-
     return (int)sys_call2(102, 1, (long)args);           /* socketcall(SYS_SOCKET) */
 #endif
 }
-
-/* --------------------------------------------------
- * connect()
- * -------------------------------------------------- */
 
 int connect(int fd, const struct sockaddr* addr, socklen_t len)
 {
@@ -309,52 +256,19 @@ int connect(int fd, const struct sockaddr* addr, socklen_t len)
     return (int)sys_call3(42, fd, (long)addr, len);      /* SYS_connect */
 #else
     unsigned long args[3];
-
     args[0] = (unsigned long)fd;
     args[1] = (unsigned long)addr;
     args[2] = (unsigned long)len;
-
     return (int)sys_call2(102, 3, (long)args);           /* socketcall(SYS_CONNECT) */
 #endif
 }
 
-/* --------------------------------------------------
- * mmap()
- * Raw Linux syscall.
- *
- * Returns:
- *   success: mapped address
- *   failure: negative errno casted to void*
- *
- * If you want libc-like behavior, wrap negative values
- * into MAP_FAILED later.
- * -------------------------------------------------- */
-
-void* mmap(void* addr,
-           size_t len,
-           int prot,
-           int flags,
-           int fd,
-           long off)
+void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
 {
 #if defined(__x86_64__)
-
-    long ret;
-
-    ret = sys_call6(
-        9,              /* SYS_mmap */
-        (long)addr,
-        (long)len,
-        (long)prot,
-        (long)flags,
-        (long)fd,
-        (long)off
-    );
-
+    long ret = sys_call6(9, (long)addr, (long)len, (long)prot, (long)flags, (long)fd, off); /* SYS_mmap = 9 */
     return (void*)ret;
-
 #else
-
     struct mmap_args {
         unsigned long addr;
         unsigned long len;
@@ -364,8 +278,6 @@ void* mmap(void* addr,
         unsigned long offset;
     } args;
 
-    long ret;
-
     args.addr   = (unsigned long)addr;
     args.len    = (unsigned long)len;
     args.prot   = (unsigned long)prot;
@@ -373,16 +285,10 @@ void* mmap(void* addr,
     args.fd     = (unsigned long)fd;
     args.offset = (unsigned long)off;
 
-    ret = sys_call1(90, (long)&args);   /* SYS_mmap = 90 */
-
+    long ret = sys_call1(90, (long)&args);   /* SYS_mmap = 90 */
     return (void*)ret;
-
 #endif
 }
-
-/* --------------------------------------------------
- * munmap()
- * -------------------------------------------------- */
 
 int munmap(void* addr, size_t len)
 {
@@ -394,17 +300,13 @@ int munmap(void* addr, size_t len)
 }
 
 /* --------------------------------------------------
- * Memory helpers
+ * Робота з пам'яттю
  * -------------------------------------------------- */
-
 void* memset(void* dst, int val, size_t n)
 {
     u8* p = (u8*)dst;
     u8 v = (u8)val;
-
-    while (n--)
-        *p++ = v;
-
+    while (n--) *p++ = v;
     return dst;
 }
 
@@ -412,10 +314,7 @@ void* memcpy(void* dst, const void* src, size_t n)
 {
     u8* d = (u8*)dst;
     const u8* s = (const u8*)src;
-
-    for (size_t i = 0; i < n; ++i)
-        d[i] = s[i];
-
+    for (size_t i = 0; i < n; ++i) d[i] = s[i];
     return dst;
 }
 
@@ -424,50 +323,38 @@ void* memmove(void* dst, const void* src, size_t n)
     u8* d = (u8*)dst;
     const u8* s = (const u8*)src;
 
-    if (d == s || n == 0)
-        return dst;
+    if (d == s || n == 0) return dst;
 
     if (d < s) {
-        for (size_t i = 0; i < n; ++i)
-            d[i] = s[i];
+        for (size_t i = 0; i < n; ++i) d[i] = s[i];
     } else {
-        while (n--)
-            d[n] = s[n];
+        while (n--) d[n] = s[n];
     }
-
     return dst;
 }
 
 /* --------------------------------------------------
  * getenv()
  * -------------------------------------------------- */
-
 char* getenv(const char* name)
 {
     size_t name_len;
-
-    if (!name || !*name)
-        return 0;
+    if (!name || !*name) return 0;
 
     name_len = strlen(name);
-
-    if (!environ)
-        return 0;
+    if (!environ) return 0;
 
     for (char** e = environ; *e; ++e) {
-        if (strncmp(*e, name, name_len) == 0 &&
-            (*e)[name_len] == '=') {
+        if (strncmp(*e, name, name_len) == 0 && (*e)[name_len] == '=') {
             return *e + name_len + 1;
         }
     }
-
     return 0;
 }
 
 /* --------------------------------------------------
- * Mini heap allocator
+ * Міні-алокатор купи (Heap)
  * -------------------------------------------------- */
-
 #define HEAP_SIZE   (1024UL * 1024UL)
 #define ALIGNMENT   16UL
 #define MAGIC_USED  ((size_t)0xC0FFEEUL)
@@ -489,37 +376,19 @@ static HeapBlock* heap_head = 0;
 
 static size_t heap_align_size(size_t n)
 {
-    size_t aligned;
-
-    if (n == 0)
-        n = 1;
-
-    if (n > ((size_t)-1) - (ALIGNMENT - 1))
-        abort();
-
-    aligned = ALIGN_UP(n);
-
-    return aligned;
+    if (n == 0) n = 1;
+    if (n > ((size_t)-1) - (ALIGNMENT - 1)) abort();
+    return ALIGN_UP(n);
 }
 
 static void heap_split_block(HeapBlock* block, size_t wanted)
 {
-    size_t remaining;
-    HeapBlock* next;
+    if (!block || block->size <= wanted) return;
 
-    if (!block)
-        return;
+    size_t remaining = block->size - wanted;
+    if (remaining < HEADER_SIZE + ALIGNMENT) return;
 
-    if (block->size <= wanted)
-        return;
-
-    remaining = block->size - wanted;
-
-    if (remaining < HEADER_SIZE + ALIGNMENT)
-        return;
-
-    next = (HeapBlock*)((u8*)block + HEADER_SIZE + wanted);
-
+    HeapBlock* next = (HeapBlock*)((u8*)block + HEADER_SIZE + wanted);
     next->size = remaining - HEADER_SIZE;
     next->free = 1;
     next->magic = MAGIC_USED;
@@ -532,19 +401,13 @@ static void heap_split_block(HeapBlock* block, size_t wanted)
 static void heap_coalesce(void)
 {
     HeapBlock* cur = heap_head;
-
     while (cur && cur->next) {
         u8* cur_end = (u8*)cur + HEADER_SIZE + cur->size;
-
-        if (cur->free &&
-            cur->next->free &&
-            cur_end == (u8*)cur->next) {
-
+        if (cur->free && cur->next->free && cur_end == (u8*)cur->next) {
             cur->size += HEADER_SIZE + cur->next->size;
             cur->next = cur->next->next;
             continue;
         }
-
         cur = cur->next;
     }
 }
@@ -552,32 +415,20 @@ static void heap_coalesce(void)
 static HeapBlock* heap_find_free(size_t n)
 {
     HeapBlock* cur = heap_head;
-
     while (cur) {
-        if (cur->free && cur->size >= n)
-            return cur;
-
+        if (cur->free && cur->size >= n) return cur;
         cur = cur->next;
     }
-
     return 0;
 }
 
 static HeapBlock* heap_new_block(size_t n)
 {
-    HeapBlock* block;
-    size_t need;
+    if (n > ((size_t)-1) - HEADER_SIZE) abort();
+    size_t need = HEADER_SIZE + n;
+    if (need > HEAP_SIZE - heap_off) abort();
 
-    if (n > ((size_t)-1) - HEADER_SIZE)
-        abort();
-
-    need = HEADER_SIZE + n;
-
-    if (need > HEAP_SIZE - heap_off)
-        abort();
-
-    block = (HeapBlock*)&heap[heap_off];
-
+    HeapBlock* block = (HeapBlock*)&heap[heap_off];
     block->size = n;
     block->free = 0;
     block->magic = MAGIC_USED;
@@ -587,45 +438,26 @@ static HeapBlock* heap_new_block(size_t n)
         heap_head = block;
     } else {
         HeapBlock* cur = heap_head;
-
-        while (cur->next)
-            cur = cur->next;
-
+        while (cur->next) cur = cur->next;
         cur->next = block;
     }
 
     heap_off += need;
-
     return block;
 }
 
 static HeapBlock* heap_block_from_ptr(void* p)
 {
-    HeapBlock* block;
-
-    if (!p)
-        return 0;
-
-    block = (HeapBlock*)((u8*)p - HEADER_SIZE);
-
-    if (block->magic != MAGIC_USED)
-        abort();
-
+    if (!p) return 0;
+    HeapBlock* block = (HeapBlock*)((u8*)p - HEADER_SIZE);
+    if (block->magic != MAGIC_USED) abort();
     return block;
 }
 
-/* --------------------------------------------------
- * malloc()
- * -------------------------------------------------- */
-
 void* malloc(size_t n)
 {
-    HeapBlock* block;
-    size_t wanted;
-
-    wanted = heap_align_size(n);
-
-    block = heap_find_free(wanted);
+    size_t wanted = heap_align_size(n);
+    HeapBlock* block = heap_find_free(wanted);
 
     if (block) {
         block->free = 0;
@@ -634,72 +466,35 @@ void* malloc(size_t n)
     }
 
     block = heap_new_block(wanted);
-
     return (u8*)block + HEADER_SIZE;
 }
 
-/* --------------------------------------------------
- * free()
- * -------------------------------------------------- */
-
 void free(void* p)
 {
-    HeapBlock* block;
-
-    if (!p)
-        return;
-
-    block = heap_block_from_ptr(p);
-
-    if (block->free)
-        abort();
+    if (!p) return;
+    HeapBlock* block = heap_block_from_ptr(p);
+    if (block->free) abort();
 
     block->free = 1;
-
     heap_coalesce();
 }
 
-/* --------------------------------------------------
- * calloc()
- * -------------------------------------------------- */
-
 void* calloc(size_t n, size_t s)
 {
-    size_t total;
-    void* p;
-
-    if (n != 0 && s > ((size_t)-1) / n)
-        abort();
-
-    total = n * s;
-
-    p = malloc(total);
+    if (n != 0 && s > ((size_t)-1) / n) abort();
+    size_t total = n * s;
+    void* p = malloc(total);
     memset(p, 0, total);
-
     return p;
 }
 
-/* --------------------------------------------------
- * realloc()
- * -------------------------------------------------- */
-
 void* realloc(void* p, size_t n)
 {
-    HeapBlock* block;
-    size_t wanted;
-    void* new_ptr;
-    size_t copy_size;
+    if (!p) return malloc(n);
+    if (n == 0) { free(p); return 0; }
 
-    if (!p)
-        return malloc(n);
-
-    if (n == 0) {
-        free(p);
-        return 0;
-    }
-
-    block = heap_block_from_ptr(p);
-    wanted = heap_align_size(n);
+    HeapBlock* block = heap_block_from_ptr(p);
+    size_t wanted = heap_align_size(n);
 
     if (block->size >= wanted) {
         heap_split_block(block, wanted);
@@ -708,10 +503,8 @@ void* realloc(void* p, size_t n)
 
     if (block->next && block->next->free) {
         u8* block_end = (u8*)block + HEADER_SIZE + block->size;
-
         if (block_end == (u8*)block->next) {
             size_t combined = block->size + HEADER_SIZE + block->next->size;
-
             if (combined >= wanted) {
                 block->size = combined;
                 block->next = block->next->next;
@@ -721,118 +514,64 @@ void* realloc(void* p, size_t n)
         }
     }
 
-    new_ptr = malloc(n);
-
-    copy_size = block->size;
-    if (copy_size > n)
-        copy_size = n;
-
+    void* new_ptr = malloc(n);
+    size_t copy_size = (block->size > n) ? n : block->size;
     memcpy(new_ptr, p, copy_size);
     free(p);
-
     return new_ptr;
 }
 
 /* --------------------------------------------------
- * strlen
+ * Рядкові функції
  * -------------------------------------------------- */
 size_t strlen(const char* s)
 {
     const char* p = s;
-
-    while (*p)
-        ++p;
-
+    while (*p) ++p;
     return (size_t)(p - s);
 }
 
-/* --------------------------------------------------
- * strcmp
- * -------------------------------------------------- */
 int strcmp(const char* a, const char* b)
 {
-    while (*a && (*a == *b)) {
-        ++a;
-        ++b;
-    }
-
+    while (*a && (*a == *b)) { ++a; ++b; }
     return (int)((unsigned char)*a - (unsigned char)*b);
 }
 
-/* --------------------------------------------------
- * strncmp
- * -------------------------------------------------- */
 int strncmp(const char* a, const char* b, size_t n)
 {
-    while (n && *a && (*a == *b)) {
-        ++a;
-        ++b;
-        --n;
-    }
-
-    if (n == 0)
-        return 0;
-
+    while (n && *a && (*a == *b)) { ++a; ++b; --n; }
+    if (n == 0) return 0;
     return (int)((unsigned char)*a - (unsigned char)*b);
 }
 
-/* --------------------------------------------------
- * memcmp
- * -------------------------------------------------- */
 int memcmp(const void* a, const void* b, size_t n)
 {
     const u8* x = (const u8*)a;
     const u8* y = (const u8*)b;
-
     for (size_t i = 0; i < n; ++i) {
-        if (x[i] != y[i])
-            return (int)x[i] - (int)y[i];
+        if (x[i] != y[i]) return (int)x[i] - (int)y[i];
     }
-
     return 0;
 }
-
-/* --------------------------------------------------
- * puts
- * Puts text to println 
- * Requires write(int fd, const void* buf, size_t len).
- * -------------------------------------------------- */
 
 extern void println(const char* s);
 
 int puts(const char* s)
 {
-    if (!s)
-        s = "(null)";
-
+    if (!s) s = "(null)";
     println(s);
     return 0;
 }
 
-/* --------------------------------------------------
- * strdup
- * Allocates and duplicates a C string.
- * Requires malloc() and memcpy().
- * -------------------------------------------------- */
 char* strdup(const char* s)
 {
-    size_t n;
-    char* out;
-
-    n = strlen(s);
-
-    if (n == (size_t)-1)
-        abort();
-
+    size_t n = strlen(s);
+    if (n == (size_t)-1) abort();
     n = n + 1;
 
-    out = (char*)malloc(n);
-
-    if (!out)
-        abort();
-
+    char* out = (char*)malloc(n);
+    if (!out) abort();
     memcpy(out, s, n);
-
     return out;
 }
 
@@ -841,63 +580,38 @@ char* strdup(const char* s)
 #endif
 
 /* --------------------------------------------------
- * C++ new/delete
+ * C++ нові оператори керування пам'яттю
  * -------------------------------------------------- */
-
 #ifdef __cplusplus
 
-/* Always needed (basic) */
 void* operator new(size_t n) { return malloc(n); }
 void* operator new[](size_t n) { return malloc(n); }
 
 void operator delete(void* p) noexcept { free(p); }
 void operator delete[](void* p) noexcept { free(p); }
 
-/* Detector and addition of sized delete for C++14 and above */
 #if __cplusplus >= 201402L
-
-void operator delete(void* p, size_t) noexcept
-{
-    free(p);
-}
-
-void operator delete[](void* p, size_t) noexcept
-{
-    free(p);
-}
-
-#endif // __cplusplus >= 201402L
-
-#endif // __cplusplus
-
-#ifdef __cplusplus
-extern "C" void __gxx_personality_v0(void) {}
-extern "C" int __cxa_atexit(void (*f)(void*), void* p, void* d) {
-    return 0; 
-}
-extern "C" int __cxa_guard_acquire(long* guard) {
-    if (*guard) return 0; // Вже ініціалізовано
-    return 1;             // Ініціалізуємо зараз
-}
-
-extern "C" void __cxa_guard_release(long* guard) {
-    *guard = 1;           // Позначаємо як ініціалізовано
-}
-
-extern "C" void __cxa_guard_abort(long* guard) {
-    abort();
-}
+void operator delete(void* p, size_t) noexcept { free(p); }
+void operator delete[](void* p, size_t) noexcept { free(p); }
 #endif
 
-#ifdef __cplusplus
+extern "C" void __gxx_personality_v0(void) {}
+extern "C" int __cxa_atexit(void (*f)(void*), void* p, void* d) { return 0; }
+
+extern "C" int __cxa_guard_acquire(long* guard) {
+    if (*guard) return 0; 
+    return 1;             
+}
+
+extern "C" void __cxa_guard_release(long* guard) { *guard = 1; }
+extern "C" void __cxa_guard_abort(long* guard) { abort(); }
+
 namespace std {
     template<typename InputIt, typename T>
     auto count(InputIt first, InputIt last, const T& value) {
         auto n = 0;
         for (; first != last; ++first) {
-            if (*first == value) {
-                n++;
-            }
+            if (*first == value) { n++; }
         }
         return n;
     }
