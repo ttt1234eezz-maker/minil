@@ -136,7 +136,7 @@ int snprintf(char* str, size_t size, const char* format, ...) {
 NORETURN void abort(void)
 {
     _exit(127);
-    for (;;) { /* unreachable */ }
+    while(1);
 }
 void __cxa_pure_virtual(void)
 {
