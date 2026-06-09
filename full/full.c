@@ -32,12 +32,12 @@ struct sockaddr_un {
 extern void _exit(int);
 extern char** environ;
 
-/* Попередні оголошення (Forward Declarations) для уникнення помилок компіляції */
+/* Forward Declarations to prevent compilation errors */
 size_t strlen(const char* s);
 int strncmp(const char* a, const char* b, size_t n);
 
 /* --------------------------------------------------
- * Буферні помічники для snprintf
+ * Buffer helpers for snprintf
  * -------------------------------------------------- */
 static void buf_putc(char** buf, size_t* remain, char c) {
     if (*remain > 1) {
@@ -47,7 +47,7 @@ static void buf_putc(char** buf, size_t* remain, char c) {
     }
 }
 
-/* ВИПРАВЛЕНО: Додано відсутню функцію buf_puts */
+/* FIXED: Added missing buf_puts function */
 static void buf_puts(char** buf, size_t* remain, const char* s) {
     while (*s) {
         buf_putc(buf, remain, *s++);
@@ -86,12 +86,12 @@ int snprintf(char* str, size_t size, const char* format, ...) {
             case 's': {
                 const char* s = va_arg(args, const char*);
                 if (!s) s = "(null)";
-                /* Оптимізовано: використання спільного buf_puts */
+                /* Optimized: utilizing the shared buf_puts */
                 buf_puts(&p, &remain, s);
                 break;
             }
             case 'd': {
-                /* ВИПРАВЛЕНО: Коректна обробка від'ємних чисел */
+                /* FIXED: Correct handling of negative numbers */
                 int val = va_arg(args, int);
                 if (val < 0) {
                     buf_putc(&p, &remain, '-');
@@ -144,67 +144,145 @@ void __cxa_pure_virtual(void)
 #endif 
 
 /* --------------------------------------------------
- * Raw Linux syscall helpers
+ * Raw Linux syscall helpers with Multi-Arch Support
  * -------------------------------------------------- */
+
 #if defined(__x86_64__)
+    #define SYS_CALL "syscall"
+    #define SYS_CLOBBERS "rcx", "r11", "memory"
+#elif defined(__aarch64__)
+    #define SYS_CALL "svc #0"
+    #define SYS_CLOBBERS "memory"
+#elif defined(__riscv) && (__riscv_xlen == 64)
+    #define SYS_CALL "ecall"
+    #define SYS_CLOBBERS "memory"
+#endif
+
+/* 64-bit architectures (x86_64, ARM64, RISC-V 64) share similar direct register passing */
+#if defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64))
 
 static long sys_call1(long n, long a)
 {
     long ret;
-    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a) : "rcx", "r11", "memory");
+#if defined(__x86_64__)
+    __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "D"(a) : SYS_CLOBBERS);
+#elif defined(__aarch64__)
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    __asm__ volatile (SYS_CALL : "+r"(x0) : "r"(x8) : SYS_CLOBBERS);
+    ret = x0;
+#elif defined(__riscv)
+    register long a7 __asm__("a7") = n;
+    register long a0 __asm__("a0") = a;
+    __asm__ volatile (SYS_CALL : "+r"(a0) : "r"(a7) : SYS_CLOBBERS);
+    ret = a0;
+#endif
     return ret;
 }
 
 static long sys_call2(long n, long a, long b)
 {
     long ret;
-    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b) : "rcx", "r11", "memory");
+#if defined(__x86_64__)
+    __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "D"(a), "S"(b) : SYS_CLOBBERS);
+#elif defined(__aarch64__)
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    __asm__ volatile (SYS_CALL : "+r"(x0) : "r"(x8), "r"(x1) : SYS_CLOBBERS);
+    ret = x0;
+#elif defined(__riscv)
+    register long a7 __asm__("a7") = n;
+    register long a0 __asm__("a0") = a;
+    register long a1 __asm__("a1") = b;
+    __asm__ volatile (SYS_CALL : "+r"(a0) : "r"(a7), "r"(a1) : SYS_CLOBBERS);
+    ret = a0;
+#endif
     return ret;
 }
 
 static long sys_call3(long n, long a, long b, long c)
 {
     long ret;
-    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory");
+#if defined(__x86_64__)
+    __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c) : SYS_CLOBBERS);
+#elif defined(__aarch64__)
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    __asm__ volatile (SYS_CALL : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : SYS_CLOBBERS);
+    ret = x0;
+#elif defined(__riscv)
+    register long a7 __asm__("a7") = n;
+    register long a0 __asm__("a0") = a;
+    register long a1 __asm__("a1") = b;
+    register long a2 __asm__("a2") = c;
+    __asm__ volatile (SYS_CALL : "+r"(a0) : "r"(a7), "r"(a1), "r"(a2) : SYS_CLOBBERS);
+    ret = a0;
+#endif
     return ret;
 }
 
 static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
 {
     long ret;
+#if defined(__x86_64__)
     register long r10 __asm__("r10") = d;
     register long r8  __asm__("r8")  = e;
     register long r9  __asm__("r9")  = f;
-
     __asm__ volatile (
-        "syscall"
+        SYS_CALL
         : "=a"(ret)
         : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
-        : "rcx", "r11", "memory"
+        : SYS_CLOBBERS
     );
+#elif defined(__aarch64__)
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    register long x5 __asm__("x5") = f;
+    __asm__ volatile (SYS_CALL : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : SYS_CLOBBERS);
+    ret = x0;
+#elif defined(__riscv)
+    register long a7 __asm__("a7") = n;
+    register long a0 __asm__("a0") = a;
+    register long a1 __asm__("a1") = b;
+    register long a2 __asm__("a2") = c;
+    register long a3 __asm__("a3") = d;
+    register long a4 __asm__("a4") = e;
+    register long a5 __asm__("a5") = f;
+    __asm__ volatile (SYS_CALL : "+r"(a0) : "r"(a7), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5) : SYS_CLOBBERS);
+    ret = a0;
+#endif
     return ret;
 }
 
-#else /* i386 */
+#else /* i386 (Legacy fallback using int $0x80) */
+
+#define SYS_CALL "int $0x80"
 
 static long sys_call1(long n, long a)
 {
     long ret;
-    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(n), "b"(a) : "memory");
+    __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "b"(a) : "memory");
     return ret;
 }
 
 static long sys_call2(long n, long a, long b)
 {
     long ret;
-    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(n), "b"(a), "c"(b) : "memory");
+    __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "b"(a), "c"(b) : "memory");
     return ret;
 }
 
 static long sys_call3(long n, long a, long b, long c)
 {
     long ret;
-    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(n), "b"(a), "c"(b), "d"(c) : "memory");
+    __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "b"(a), "c"(b), "d"(c) : "memory");
     return ret;
 }
 
@@ -214,7 +292,7 @@ static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
     __asm__ volatile (
         "pushl %%ebp\n\t"
         "movl %[arg6], %%ebp\n\t"
-        "int $0x80\n\t"
+        SYS_CALL "\n\t"
         "popl %%ebp\n\t"
         : "=a"(ret)
         : "0"(n), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e), [arg6] "r"(f)
@@ -226,21 +304,23 @@ static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
 #endif
 
 /* --------------------------------------------------
- * Системні виклики
+ * System Calls (Cross-platform wrapper using standard POSIX NR)
+ * Note: Table IDs may vary for legacy architectures (like i386),
+ * but match for modern 64-bit platforms (x86_64, aarch64, riscv64).
  * -------------------------------------------------- */
 int close(int fd)
 {
-#if defined(__x86_64__)
-    return (int)sys_call1(3, fd);       /* SYS_close = 3 */
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
+    return (int)sys_call1(3, fd);       /* __NR_close = 3 */
 #else
-    return (int)sys_call1(6, fd);       /* SYS_close = 6 */
+    return (int)sys_call1(6, fd);       /* i386 SYS_close = 6 */
 #endif
 }
 
 int socket(int domain, int type, int protocol)
 {
-#if defined(__x86_64__)
-    return (int)sys_call3(41, domain, type, protocol);   /* SYS_socket */
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
+    return (int)sys_call3(41, domain, type, protocol);   /* __NR_socket = 41 */
 #else
     unsigned long args[3];
     args[0] = (unsigned long)domain;
@@ -252,8 +332,8 @@ int socket(int domain, int type, int protocol)
 
 int connect(int fd, const struct sockaddr* addr, socklen_t len)
 {
-#if defined(__x86_64__)
-    return (int)sys_call3(42, fd, (long)addr, len);      /* SYS_connect */
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
+    return (int)sys_call3(42, fd, (long)addr, len);      /* __NR_connect = 42 */
 #else
     unsigned long args[3];
     args[0] = (unsigned long)fd;
@@ -265,8 +345,8 @@ int connect(int fd, const struct sockaddr* addr, socklen_t len)
 
 void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
 {
-#if defined(__x86_64__)
-    long ret = sys_call6(9, (long)addr, (long)len, (long)prot, (long)flags, (long)fd, off); /* SYS_mmap = 9 */
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
+    long ret = sys_call6(9, (long)addr, (long)len, (long)prot, (long)flags, (long)fd, off); /* __NR_mmap = 9 */
     return (void*)ret;
 #else
     struct mmap_args {
@@ -292,15 +372,15 @@ void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
 
 int munmap(void* addr, size_t len)
 {
-#if defined(__x86_64__)
-    return (int)sys_call2(11, (long)addr, (long)len);  /* SYS_munmap = 11 */
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
+    return (int)sys_call2(11, (long)addr, (long)len);  /* __NR_munmap = 11 */
 #else
-    return (int)sys_call2(91, (long)addr, (long)len);  /* SYS_munmap = 91 */
+    return (int)sys_call2(91, (long)addr, (long)len);  /* i386 SYS_munmap = 91 */
 #endif
 }
 
 /* --------------------------------------------------
- * Робота з пам'яттю
+ * Memory Operations
  * -------------------------------------------------- */
 void* memset(void* dst, int val, size_t n)
 {
@@ -353,7 +433,7 @@ char* getenv(const char* name)
 }
 
 /* --------------------------------------------------
- * Міні-алокатор купи (Heap)
+ * Mini Heap Allocator
  * -------------------------------------------------- */
 #define HEAP_SIZE   (1024UL * 1024UL)
 #define ALIGNMENT   16UL
@@ -522,7 +602,7 @@ void* realloc(void* p, size_t n)
 }
 
 /* --------------------------------------------------
- * Рядкові функції
+ * String Functions
  * -------------------------------------------------- */
 size_t strlen(const char* s)
 {
@@ -580,7 +660,7 @@ char* strdup(const char* s)
 #endif
 
 /* --------------------------------------------------
- * C++ нові оператори керування пам'яттю
+ * C++ memory management new/delete operators
  * -------------------------------------------------- */
 #ifdef __cplusplus
 
@@ -600,7 +680,7 @@ extern "C" int __cxa_atexit(void (*f)(void*), void* p, void* d) { return 0; }
 
 extern "C" int __cxa_guard_acquire(long* guard) {
     if (*guard) return 0; 
-    return 1;             
+    return 1;              
 }
 
 extern "C" void __cxa_guard_release(long* guard) { *guard = 1; }
