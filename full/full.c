@@ -13,6 +13,14 @@ typedef unsigned char u8;
 typedef unsigned short sa_family_t;
 typedef unsigned int   socklen_t;
 
+#if (defined(__cplusplus) && __cplusplus >= 201103L) || \
+    (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
+    #define NORETURN [[noreturn]]
+#else
+    /* fallback */
+    #define NORETURN __attribute__((noreturn))
+#endif
+
 struct sockaddr {
     sa_family_t sa_family;
     char sa_data[14];
@@ -125,13 +133,11 @@ int snprintf(char* str, size_t size, const char* format, ...) {
 /* --------------------------------------------------
  * abort()
  * -------------------------------------------------- */
-__attribute__((noreturn))
-void abort(void)
+NORETURN void abort(void)
 {
     _exit(127);
     for (;;) { /* unreachable */ }
 }
-
 void __cxa_pure_virtual(void)
 {
     abort();
