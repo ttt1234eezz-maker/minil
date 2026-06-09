@@ -286,6 +286,57 @@ math_max:
 1:
     ret
 
+/*
+ * print(const char *s)
+ *   Writes to stdout.
+ */
+.global print
+print:
+#if defined(__x86_64__)
+        /* rdi = pointer to string */
+
+        /* strlen */
+        xorq    %rcx, %rcx
+.Llen:
+        cmpb    $0, (%rdi,%rcx)
+        je      .Lwrite
+        incq    %rcx
+        jmp     .Llen
+
+.Lwrite:
+        movq    %rcx, %rdx        /* len */
+        movq    %rdi, %rsi        /* buf */
+        movq    $1, %rdi          /* fd = stdout */
+        movq    $1, %rax          /* SYS_write */
+        syscall
+        ret
+
+#else
+        /* FIX: the two register saves shift %esp by 8 bytes before the
+           return address, so the first argument is at 12(%esp), not 4(%esp).
+           Previous code used 4(%esp) which read the wrong stack slot. */
+        pushl   %ebx
+        pushl   %esi
+
+        movl    12(%esp), %esi    /* s  (was 4(%esp) — wrong after 2 pushes) */
+        xorl    %ecx, %ecx
+.Llen32:
+        cmpb    $0, (%esi,%ecx)
+        je      .Lwrite32
+        incl    %ecx
+        jmp     .Llen32
+
+.Lwrite32:
+        movl    %ecx, %edx        /* len */
+        movl    %esi, %ecx        /* buf */
+        movl    $1, %ebx          /* fd */
+        movl    $4, %eax          /* SYS_write */
+        int     $0x80
+        ret
+#endif
+1:
+        ret
+
 .global math_min
 math_min:
 #if defined(__x86_64__)
