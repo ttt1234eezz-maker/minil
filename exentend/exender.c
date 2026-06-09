@@ -18,6 +18,7 @@ extern void _exit(int);
 void abort(void)
 {
     _exit(127);
+    while(1);
 }
 
 void __cxa_pure_virtual(void)
