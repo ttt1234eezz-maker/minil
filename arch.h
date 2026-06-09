@@ -7,6 +7,7 @@
     #define ASM_SYSCALL "syscall"
     #define ARG0 %rdi
     #define ARG1 %rsi
+    #define ARG2 %rdx
 #elif defined(__aarch64__)
     #define SYS_WRITE 64
     #define SYS_EXIT  93
