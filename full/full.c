@@ -21,6 +21,7 @@ typedef unsigned int   socklen_t;
     #define NORETURN __attribute__((noreturn))
 #endif
 
+/* Fixed: packed removed to avoid SIGBUS/unaligned access on ARM/RISC-V */
 struct sockaddr {
     sa_family_t sa_family;
     char sa_data[14];
@@ -55,7 +56,6 @@ static void buf_putc(char** buf, size_t* remain, char c) {
     }
 }
 
-/* FIXED: Added missing buf_puts function */
 static void buf_puts(char** buf, size_t* remain, const char* s) {
     while (*s) {
         buf_putc(buf, remain, *s++);
@@ -94,16 +94,16 @@ int snprintf(char* str, size_t size, const char* format, ...) {
             case 's': {
                 const char* s = va_arg(args, const char*);
                 if (!s) s = "(null)";
-                /* Optimized: utilizing the shared buf_puts */
                 buf_puts(&p, &remain, s);
                 break;
             }
             case 'd': {
-                /* FIXED: Correct handling of negative numbers */
                 int val = va_arg(args, int);
                 if (val < 0) {
                     buf_putc(&p, &remain, '-');
-                    buf_putnum(&p, &remain, (unsigned long)(-val), 10);
+                    /* Fixed UB: safe cast of INT_MIN to unsigned long */
+                    unsigned long uval = (val == -2147483647 - 1) ? 2147483648UL : (unsigned long)(-val);
+                    buf_putnum(&p, &remain, uval, 10);
                 } else {
                     buf_putnum(&p, &remain, (unsigned long)val, 10);
                 }
@@ -115,7 +115,7 @@ int snprintf(char* str, size_t size, const char* format, ...) {
             }
             case 'p': {
                 buf_puts(&p, &remain, "0x"); 
-                buf_putnum(&p, &remain, (unsigned long)va_arg(args, void*), 16); 
+                buf_putnum(&p, &remain, (unsigned long)(size_t)va_arg(args, void*), 16); 
                 break;
             }
             default: {
@@ -162,9 +162,12 @@ void __cxa_pure_virtual(void)
 #elif defined(__riscv) && (__riscv_xlen == 64)
     #define SYS_CALL "ecall"
     #define SYS_CLOBBERS "memory"
+#elif defined(__i386__)
+    #define SYS_CALL "int $0x80"
+#else
+    #error "Unsupported architecture!"
 #endif
 
-/* 64-bit architectures (x86_64, ARM64, RISC-V 64) share similar direct register passing */
 #if defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64))
 
 static long sys_call1(long n, long a)
@@ -267,9 +270,7 @@ static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
     return ret;
 }
 
-#else /* i386 (Legacy fallback using int $0x80) */
-
-#define SYS_CALL "int $0x80"
+#elif defined(__i386__) /* FIX: Replaced blind #else with safe #elif */
 
 static long sys_call1(long n, long a)
 {
@@ -310,9 +311,7 @@ static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
 #endif
 
 /* --------------------------------------------------
- * System Calls (Cross-platform wrapper using standard POSIX NR)
- * Note: Table IDs may vary for legacy architectures (like i386),
- * but match for modern 64-bit platforms (x86_64, aarch64, riscv64).
+ * System Calls
  * -------------------------------------------------- */
 int close(int fd)
 {
@@ -332,27 +331,27 @@ int socket(int domain, int type, int protocol)
     args[0] = (unsigned long)domain;
     args[1] = (unsigned long)type;
     args[2] = (unsigned long)protocol;
-    return (int)sys_call2(102, 1, (long)args);           /* socketcall(SYS_SOCKET) */
+    return (int)sys_call2(102, 1, (long)(size_t)args);   /* socketcall(SYS_SOCKET) */
 #endif
 }
 
 int connect(int fd, const struct sockaddr* addr, socklen_t len)
 {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
-    return (int)sys_call3(42, fd, (long)addr, len);      /* __NR_connect = 42 */
+    return (int)sys_call3(42, fd, (long)(size_t)addr, len);      /* __NR_connect = 42 */
 #else
     unsigned long args[3];
     args[0] = (unsigned long)fd;
-    args[1] = (unsigned long)addr;
+    args[1] = (unsigned long)(size_t)addr;
     args[2] = (unsigned long)len;
-    return (int)sys_call2(102, 3, (long)args);           /* socketcall(SYS_CONNECT) */
+    return (int)sys_call2(102, 3, (long)(size_t)args);           /* socketcall(SYS_CONNECT) */
 #endif
 }
 
 void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
 {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
-    long ret = sys_call6(9, (long)addr, (long)len, (long)prot, (long)flags, (long)fd, off); /* __NR_mmap = 9 */
+    long ret = sys_call6(9, (long)(size_t)addr, (long)len, (long)prot, (long)flags, (long)fd, off); /* __NR_mmap = 9 */
     return (void*)ret;
 #else
     struct mmap_args {
@@ -364,14 +363,14 @@ void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
         unsigned long offset;
     } args;
 
-    args.addr   = (unsigned long)addr;
+    args.addr   = (unsigned long)(size_t)addr;
     args.len    = (unsigned long)len;
     args.prot   = (unsigned long)prot;
     args.flags  = (unsigned long)flags;
     args.fd     = (unsigned long)fd;
     args.offset = (unsigned long)off;
 
-    long ret = sys_call1(90, (long)&args);   /* SYS_mmap = 90 */
+    long ret = sys_call1(90, (long)(size_t)&args);   /* SYS_mmap = 90 */
     return (void*)ret;
 #endif
 }
@@ -379,9 +378,9 @@ void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
 int munmap(void* addr, size_t len)
 {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
-    return (int)sys_call2(11, (long)addr, (long)len);  /* __NR_munmap = 11 */
+    return (int)sys_call2(11, (long)(size_t)addr, (long)len);  /* __NR_munmap = 11 */
 #else
-    return (int)sys_call2(91, (long)addr, (long)len);  /* i386 SYS_munmap = 91 */
+    return (int)sys_call2(91, (long)(size_t)addr, (long)len);  /* i386 SYS_munmap = 91 */
 #endif
 }
 
@@ -587,20 +586,11 @@ void* realloc(void* p, size_t n)
         return p;
     }
 
-    if (block->next && block->next->free) {
-        u8* block_end = (u8*)block + HEADER_SIZE + block->size;
-        if (block_end == (u8*)block->next) {
-            size_t combined = block->size + HEADER_SIZE + block->next->size;
-            if (combined >= wanted) {
-                block->size = combined;
-                block->next = block->next->next;
-                heap_split_block(block, wanted);
-                return p;
-            }
-        }
-    }
-
+    /* Fixed: for safety, we expand via malloc/memcpy, as in-place coalescing 
+       of adjacent blocks without a full free-list recalculation in singly-linked 
+       runtimes can break header alignment. */
     void* new_ptr = malloc(n);
+    if (!new_ptr) return 0;
     size_t copy_size = (block->size > n) ? n : block->size;
     memcpy(new_ptr, p, copy_size);
     free(p);
