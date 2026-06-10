@@ -1,5 +1,10 @@
-/* This software is dedicated to the public domain under CC0 1.0 Universal. */
-/* See LICENCE.md for full legal text. */
+/* ========================================================================== *
+ * minil - Minimal Linux User-Space Runtime                                   *
+ * Full Library and Runtime Implementation                                    *
+ * -------------------------------------------------------------------------- *
+ * This software is dedicated to the public domain under CC0 1.0 Universal.   *
+ * See LICENCE.md for full legal text.                                        *
+ * ========================================================================== */
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,11 +22,16 @@ typedef unsigned int   socklen_t;
     (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
     #define NORETURN [[noreturn]]
 #else
-    /* fallback */
     #define NORETURN __attribute__((noreturn))
 #endif
 
-/* Fixed: packed removed to avoid SIGBUS/unaligned access on ARM/RISC-V */
+#if defined(__clang__)
+    #define NO_LOOP_DISTRIBUTE
+#else
+    #define NO_LOOP_DISTRIBUTE __attribute__((no_tree_loop_distribute_patterns))
+#endif
+
+
 struct sockaddr {
     sa_family_t sa_family;
     char sa_data[14];
@@ -37,17 +47,24 @@ struct sockaddr_un {
 
 #define SOCK_STREAM  1
 #define SOCK_DGRAM   2
+#define AT_FDCWD     -100
 
-extern void _exit(int);
+/* Зовнішні символи з ассемблерного crt0 */
+extern void _exit(int) NORETURN;
 extern char** environ;
+extern void println(const char* s);
 
-/* Forward Declarations to prevent compilation errors */
+/* Попередні оголошення */
 size_t strlen(const char* s);
 int strncmp(const char* a, const char* b, size_t n);
+void* memset(void* dst, int val, size_t n);
+void* memcpy(void* dst, const void* src, size_t n);
+NORETURN void abort(void);
 
-/* --------------------------------------------------
- * Buffer helpers for snprintf
- * -------------------------------------------------- */
+/* ========================================================================== *
+ * 1. Форматований вивід (snprintf)                                          *
+ * ========================================================================== */
+
 static void buf_putc(char** buf, size_t* remain, char c) {
     if (*remain > 1) {
         **buf = c;
@@ -74,9 +91,6 @@ static void buf_putnum(char** buf, size_t* remain, unsigned long n, int base) {
     while (i > 0) buf_putc(buf, remain, tmp[--i]);
 }
 
-/* --------------------------------------------------
- * snprintf()
- * -------------------------------------------------- */
 int snprintf(char* str, size_t size, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -101,7 +115,7 @@ int snprintf(char* str, size_t size, const char* format, ...) {
                 int val = va_arg(args, int);
                 if (val < 0) {
                     buf_putc(&p, &remain, '-');
-                    /* Fixed UB: safe cast of INT_MIN to unsigned long */
+                    /* Безпечний каст INT_MIN для запобігання signed overflow UB */
                     unsigned long uval = (val == -2147483647 - 1) ? 2147483648UL : (unsigned long)(-val);
                     buf_putnum(&p, &remain, uval, 10);
                 } else {
@@ -130,28 +144,9 @@ int snprintf(char* str, size_t size, const char* format, ...) {
     return (int)(p - str);
 }
 
-/* --------------------------------------------------
- * abort()
- * -------------------------------------------------- */
-NORETURN void abort(void)
-{
-    _exit(127);
-    while(1);
-}
-void __cxa_pure_virtual(void)
-{
-    abort();
-}
-
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311
-#define ckd_add(result, a, b) __builtin_add_overflow((a), (b), (result))
-#define ckd_sub(result, a, b) __builtin_sub_overflow((a), (b), (result))
-#define ckd_mul(result, a, b) __builtin_mul_overflow((a), (b), (result))
-#endif 
-
-/* --------------------------------------------------
- * Raw Linux syscall helpers with Multi-Arch Support
- * -------------------------------------------------- */
+/* ========================================================================== *
+ * 2. Низькорівневі Системні Виклики (Multi-Arch Inline Assembly)              *
+ * ========================================================================== */
 
 #if defined(__x86_64__)
     #define SYS_CALL "syscall"
@@ -165,13 +160,12 @@ void __cxa_pure_virtual(void)
 #elif defined(__i386__)
     #define SYS_CALL "int $0x80"
 #else
-    #error "Unsupported architecture!"
+    #error "Unsupported architecture for minil runtime!"
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64))
 
-static long sys_call1(long n, long a)
-{
+static long sys_call1(long n, long a) {
     long ret;
 #if defined(__x86_64__)
     __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "D"(a) : SYS_CLOBBERS);
@@ -189,8 +183,7 @@ static long sys_call1(long n, long a)
     return ret;
 }
 
-static long sys_call2(long n, long a, long b)
-{
+static long sys_call2(long n, long a, long b) {
     long ret;
 #if defined(__x86_64__)
     __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "D"(a), "S"(b) : SYS_CLOBBERS);
@@ -210,8 +203,7 @@ static long sys_call2(long n, long a, long b)
     return ret;
 }
 
-static long sys_call3(long n, long a, long b, long c)
-{
+static long sys_call3(long n, long a, long b, long c) {
     long ret;
 #if defined(__x86_64__)
     __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c) : SYS_CLOBBERS);
@@ -233,18 +225,16 @@ static long sys_call3(long n, long a, long b, long c)
     return ret;
 }
 
-static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
-{
+static long sys_call6(long n, long a, long b, long c, long d, long e, long f) {
     long ret;
 #if defined(__x86_64__)
     register long r10 __asm__("r10") = d;
     register long r8  __asm__("r8")  = e;
     register long r9  __asm__("r9")  = f;
     __asm__ volatile (
-        SYS_CALL
-        : "=a"(ret)
-        : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
-        : SYS_CLOBBERS
+        SYS_CALL : "=a"(ret)
+                 : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
+                 : SYS_CLOBBERS
     );
 #elif defined(__aarch64__)
     register long x8 __asm__("x8") = n;
@@ -270,31 +260,27 @@ static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
     return ret;
 }
 
-#elif defined(__i386__) /* FIX: Replaced blind #else with safe #elif */
+#elif defined(__i386__)
 
-static long sys_call1(long n, long a)
-{
+static long sys_call1(long n, long a) {
     long ret;
     __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "b"(a) : "memory");
     return ret;
 }
 
-static long sys_call2(long n, long a, long b)
-{
+static long sys_call2(long n, long a, long b) {
     long ret;
     __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "b"(a), "c"(b) : "memory");
     return ret;
 }
 
-static long sys_call3(long n, long a, long b, long c)
-{
+static long sys_call3(long n, long a, long b, long c) {
     long ret;
     __asm__ volatile (SYS_CALL : "=a"(ret) : "a"(n), "b"(a), "c"(b), "d"(c) : "memory");
     return ret;
 }
 
-static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
-{
+static long sys_call6(long n, long a, long b, long c, long d, long e, long f) {
     long ret;
     __asm__ volatile (
         "pushl %%ebp\n\t"
@@ -310,11 +296,8 @@ static long sys_call6(long n, long a, long b, long c, long d, long e, long f)
 
 #endif
 
-/* --------------------------------------------------
- * System Calls
- * -------------------------------------------------- */
-int close(int fd)
-{
+/* Обертки для POSIX API */
+int close(int fd) {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
     return (int)sys_call1(3, fd);       /* __NR_close = 3 */
 #else
@@ -322,8 +305,7 @@ int close(int fd)
 #endif
 }
 
-int socket(int domain, int type, int protocol)
-{
+int socket(int domain, int type, int protocol) {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
     return (int)sys_call3(41, domain, type, protocol);   /* __NR_socket = 41 */
 #else
@@ -335,8 +317,7 @@ int socket(int domain, int type, int protocol)
 #endif
 }
 
-int connect(int fd, const struct sockaddr* addr, socklen_t len)
-{
+int connect(int fd, const struct sockaddr* addr, socklen_t len) {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
     return (int)sys_call3(42, fd, (long)(size_t)addr, len);      /* __NR_connect = 42 */
 #else
@@ -348,8 +329,7 @@ int connect(int fd, const struct sockaddr* addr, socklen_t len)
 #endif
 }
 
-void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
-{
+void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off) {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
     long ret = sys_call6(9, (long)(size_t)addr, (long)len, (long)prot, (long)flags, (long)fd, off); /* __NR_mmap = 9 */
     return (void*)ret;
@@ -375,8 +355,7 @@ void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off)
 #endif
 }
 
-int munmap(void* addr, size_t len)
-{
+int munmap(void* addr, size_t len) {
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
     return (int)sys_call2(11, (long)(size_t)addr, (long)len);  /* __NR_munmap = 11 */
 #else
@@ -384,27 +363,25 @@ int munmap(void* addr, size_t len)
 #endif
 }
 
-/* --------------------------------------------------
- * Memory Operations
- * -------------------------------------------------- */
-void* memset(void* dst, int val, size_t n)
-{
+/* ========================================================================== *
+ * 3. Низькорівнева робота з пам'яттю (Безпечна оптимізація)                 *
+ * ========================================================================== */
+
+NO_LOOP_DISTRIBUTE void* memset(void* dst, int val, size_t n) {
     u8* p = (u8*)dst;
     u8 v = (u8)val;
     while (n--) *p++ = v;
     return dst;
 }
 
-void* memcpy(void* dst, const void* src, size_t n)
-{
+NO_LOOP_DISTRIBUTE void* memcpy(void* dst, const void* src, size_t n) {
     u8* d = (u8*)dst;
     const u8* s = (const u8*)src;
     for (size_t i = 0; i < n; ++i) d[i] = s[i];
     return dst;
 }
 
-void* memmove(void* dst, const void* src, size_t n)
-{
+NO_LOOP_DISTRIBUTE void* memmove(void* dst, const void* src, size_t n) {
     u8* d = (u8*)dst;
     const u8* s = (const u8*)src;
 
@@ -418,11 +395,11 @@ void* memmove(void* dst, const void* src, size_t n)
     return dst;
 }
 
-/* --------------------------------------------------
- * getenv()
- * -------------------------------------------------- */
-char* getenv(const char* name)
-{
+/* ========================================================================== *
+ * 4. Окруження та Рядки                                                      *
+ * ========================================================================== */
+
+char* getenv(const char* name) {
     size_t name_len;
     if (!name || !*name) return 0;
 
@@ -437,9 +414,42 @@ char* getenv(const char* name)
     return 0;
 }
 
-/* --------------------------------------------------
- * Mini Heap Allocator
- * -------------------------------------------------- */
+size_t strlen(const char* s) {
+    const char* p = s;
+    while (*p) ++p;
+    return (size_t)(p - s);
+}
+
+int strcmp(const char* a, const char* b) {
+    while (*a && (*a == *b)) { ++a; ++b; }
+    return (int)((unsigned char)*a - (unsigned char)*b);
+}
+
+int strncmp(const char* a, const char* b, size_t n) {
+    while (n && *a && (*a == *b)) { ++a; ++b; --n; }
+    if (n == 0) return 0;
+    return (int)((unsigned char)*a - (unsigned char)*b);
+}
+
+int memcmp(const void* a, const void* b, size_t n) {
+    const u8* x = (const u8*)a;
+    const u8* y = (const u8*)b;
+    for (size_t i = 0; i < n; ++i) {
+        if (x[i] != y[i]) return (int)x[i] - (int)y[i];
+    }
+    return 0;
+}
+
+int puts(const char* s) {
+    if (!s) s = "(null)";
+    println(s);
+    return 0;
+}
+
+/* ========================================================================== *
+ * 5. Алокатор Кучі (Алгоритм суміжного вирівнювання блоків)                 *
+ * ========================================================================== */
+
 #define HEAP_SIZE   (1024UL * 1024UL)
 #define ALIGNMENT   16UL
 #define MAGIC_USED  ((size_t)0xC0FFEEUL)
@@ -459,15 +469,13 @@ static u8 heap[HEAP_SIZE] __attribute__((aligned(16)));
 static size_t heap_off = 0;
 static HeapBlock* heap_head = 0;
 
-static size_t heap_align_size(size_t n)
-{
+static size_t heap_align_size(size_t n) {
     if (n == 0) n = 1;
     if (n > ((size_t)-1) - (ALIGNMENT - 1)) abort();
     return ALIGN_UP(n);
 }
 
-static void heap_split_block(HeapBlock* block, size_t wanted)
-{
+static void heap_split_block(HeapBlock* block, size_t wanted) {
     if (!block || block->size <= wanted) return;
 
     size_t remaining = block->size - wanted;
@@ -483,8 +491,7 @@ static void heap_split_block(HeapBlock* block, size_t wanted)
     block->next = next;
 }
 
-static void heap_coalesce(void)
-{
+static void heap_coalesce(void) {
     HeapBlock* cur = heap_head;
     while (cur && cur->next) {
         u8* cur_end = (u8*)cur + HEADER_SIZE + cur->size;
@@ -497,8 +504,7 @@ static void heap_coalesce(void)
     }
 }
 
-static HeapBlock* heap_find_free(size_t n)
-{
+static HeapBlock* heap_find_free(size_t n) {
     HeapBlock* cur = heap_head;
     while (cur) {
         if (cur->free && cur->size >= n) return cur;
@@ -507,8 +513,7 @@ static HeapBlock* heap_find_free(size_t n)
     return 0;
 }
 
-static HeapBlock* heap_new_block(size_t n)
-{
+static HeapBlock* heap_new_block(size_t n) {
     if (n > ((size_t)-1) - HEADER_SIZE) abort();
     size_t need = HEADER_SIZE + n;
     if (need > HEAP_SIZE - heap_off) abort();
@@ -531,16 +536,14 @@ static HeapBlock* heap_new_block(size_t n)
     return block;
 }
 
-static HeapBlock* heap_block_from_ptr(void* p)
-{
+static HeapBlock* heap_block_from_ptr(void* p) {
     if (!p) return 0;
     HeapBlock* block = (HeapBlock*)((u8*)p - HEADER_SIZE);
     if (block->magic != MAGIC_USED) abort();
     return block;
 }
 
-void* malloc(size_t n)
-{
+void* malloc(size_t n) {
     size_t wanted = heap_align_size(n);
     HeapBlock* block = heap_find_free(wanted);
 
@@ -554,8 +557,7 @@ void* malloc(size_t n)
     return (u8*)block + HEADER_SIZE;
 }
 
-void free(void* p)
-{
+void free(void* p) {
     if (!p) return;
     HeapBlock* block = heap_block_from_ptr(p);
     if (block->free) abort();
@@ -564,8 +566,7 @@ void free(void* p)
     heap_coalesce();
 }
 
-void* calloc(size_t n, size_t s)
-{
+void* calloc(size_t n, size_t s) {
     if (n != 0 && s > ((size_t)-1) / n) abort();
     size_t total = n * s;
     void* p = malloc(total);
@@ -573,74 +574,28 @@ void* calloc(size_t n, size_t s)
     return p;
 }
 
-void* realloc(void* p, size_t n)
-{
+void* realloc(void* p, size_t n) {
     if (!p) return malloc(n);
     if (n == 0) { free(p); return 0; }
 
     HeapBlock* block = heap_block_from_ptr(p);
     size_t wanted = heap_align_size(n);
 
+    /* Якщо блок вже достатнього розміру — перевикористовуємо */
     if (block->size >= wanted) {
         heap_split_block(block, wanted);
         return p;
     }
 
-    /* Fixed: for safety, we expand via malloc/memcpy, as in-place coalescing 
-       of adjacent blocks without a full free-list recalculation in singly-linked 
-       runtimes can break header alignment. */
     void* new_ptr = malloc(n);
     if (!new_ptr) return 0;
-    size_t copy_size = (block->size > n) ? n : block->size;
+    size_t copy_size = block->size;
     memcpy(new_ptr, p, copy_size);
     free(p);
     return new_ptr;
 }
 
-/* --------------------------------------------------
- * String Functions
- * -------------------------------------------------- */
-size_t strlen(const char* s)
-{
-    const char* p = s;
-    while (*p) ++p;
-    return (size_t)(p - s);
-}
-
-int strcmp(const char* a, const char* b)
-{
-    while (*a && (*a == *b)) { ++a; ++b; }
-    return (int)((unsigned char)*a - (unsigned char)*b);
-}
-
-int strncmp(const char* a, const char* b, size_t n)
-{
-    while (n && *a && (*a == *b)) { ++a; ++b; --n; }
-    if (n == 0) return 0;
-    return (int)((unsigned char)*a - (unsigned char)*b);
-}
-
-int memcmp(const void* a, const void* b, size_t n)
-{
-    const u8* x = (const u8*)a;
-    const u8* y = (const u8*)b;
-    for (size_t i = 0; i < n; ++i) {
-        if (x[i] != y[i]) return (int)x[i] - (int)y[i];
-    }
-    return 0;
-}
-
-extern void println(const char* s);
-
-int puts(const char* s)
-{
-    if (!s) s = "(null)";
-    println(s);
-    return 0;
-}
-
-char* strdup(const char* s)
-{
+char* strdup(const char* s) {
     size_t n = strlen(s);
     if (n == (size_t)-1) abort();
     n = n + 1;
@@ -651,13 +606,22 @@ char* strdup(const char* s)
     return out;
 }
 
+NORETURN void abort(void) {
+    _exit(127);
+    while(1);
+}
+
+void __cxa_pure_virtual(void) {
+    abort();
+}
+
 #ifdef __cplusplus
 }
 #endif
 
-/* --------------------------------------------------
- * C++ memory management new/delete operators
- * -------------------------------------------------- */
+/* ========================================================================== *
+ * 6. Freestanding C++ Runtime Support                                       *
+ * ========================================================================== */
 #ifdef __cplusplus
 
 void* operator new(size_t n) { return malloc(n); }
@@ -671,8 +635,18 @@ void operator delete(void* p, size_t) noexcept { free(p); }
 void operator delete[](void* p, size_t) noexcept { free(p); }
 #endif
 
+#if __cplusplus >= 201703L
+namespace std {
+    enum class align_val_t : size_t {};
+}
+void operator delete(void* p, std::align_val_t) noexcept { free(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { free(p); }
+void operator delete(void* p, size_t, std::align_val_t) noexcept { free(p); }
+void operator delete[](void* p, size_t, std::align_val_t) noexcept { free(p); }
+#endif
+
 extern "C" void __gxx_personality_v0(void) {}
-extern "C" int __cxa_atexit(void (*f)(void*), void* p, void* d) { return 0; }
+extern "C" int __cxa_atexit(void (*)(void*), void*, void*) { return 0; }
 
 extern "C" int __cxa_guard_acquire(long* guard) {
     if (*guard) return 0; 
@@ -681,6 +655,31 @@ extern "C" int __cxa_guard_acquire(long* guard) {
 
 extern "C" void __cxa_guard_release(long* guard) { *guard = 1; }
 extern "C" void __cxa_guard_abort(long* guard) { abort(); }
+
+namespace std {  typedef void (*terminate_handler)();
+
+    static terminate_handler current_terminate_handler = ::abort;
+
+    NORETURN void terminate() noexcept {
+        if (current_terminate_handler) {
+            current_terminate_handler();
+        }
+        ::abort();
+    }
+
+    terminate_handler set_terminate(terminate_handler f) noexcept {
+        terminate_handler old = current_terminate_handler;
+        current_terminate_handler = f;
+        return old;
+    }
+
+    terminate_handler get_terminate() noexcept {
+        return current_terminate_handler;
+    }
+}
+extern "C" NORETURN void __verbose_terminate_handler() {
+    ::abort();
+}
 
 namespace std {
     template<typename InputIt, typename T>
