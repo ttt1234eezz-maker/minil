@@ -4,5 +4,6 @@ void println(const char *);
 
 int main(void)
 {
-    println("Hello, world!")
+    println("Hello, world!");
+    return 0;
 }
