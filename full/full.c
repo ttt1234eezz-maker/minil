@@ -1,6 +1,6 @@
 /* ========================================================================== *
  * minil - Minimal Linux User-Space Runtime                                   *
- * Full Runtime Implementation                                                *
+ * This file - Full Runtime Implementation                                                *
  * -------------------------------------------------------------------------- *
  * This software is dedicated to the public domain under CC0 1.0 Universal.   *
  * See LICENCE.md for full legal text.                                        *
