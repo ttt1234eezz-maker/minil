@@ -24,7 +24,7 @@
 #elif defined(__aarch64__)
     #define SYS_READ  63
     #define SYS_WRITE 64
-    #define SYS_OPEN  56
+    #define SYS_OPENAT 56
     #define SYS_EXIT  93
     #define ASM_SYSCALL svc #0
     #define SYSCALL_REG x8
@@ -35,7 +35,7 @@
 #elif defined(__riscv)
     #define SYS_READ  63
     #define SYS_WRITE 64
-    #define SYS_OPEN  56
+    #define SYS_OPENAT 56
     #define SYS_EXIT  93
     #define ASM_SYSCALL ecall
     #define SYSCALL_REG a7
