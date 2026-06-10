@@ -261,8 +261,8 @@ void* operator new[](size_t n) { return malloc(n); }
 void operator delete(void* p) noexcept { free(p); }
 void operator delete[](void* p) noexcept { free(p); }
 
-// Sized delete for C++14
-#if defined(__cplusplus) && __cplusplus = 201402L
+/* Sized delete для C++14 */
+#if defined(__cplusplus) && __cplusplus >= 201402L && __cplusplus < 201703L
 void operator delete(void* p, std::size_t) noexcept {
     ::free(p);
 }
@@ -270,6 +270,7 @@ void operator delete[](void* p, std::size_t) noexcept {
     ::free(p);
 }
 #endif
+
 
 
 /* C++17 extended alignment delete operators */
